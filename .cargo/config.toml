@@ -1,0 +1,2 @@
+[registries]
+kellnr = { index = "git://advancedprogramming.disi.unitn.it/index", token = "b131ce8ccf60efee8ade979ceed33cad" }
