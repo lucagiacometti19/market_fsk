@@ -1,9 +1,4 @@
-use calloop::{
-    timer::{TimeoutAction, Timer},
-    EventLoop,
-};
 use std::collections::HashMap;
-use std::time::Duration;
 
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::good::*;
@@ -13,6 +8,7 @@ struct FskMarket {
     locked_goods_to_sell: HashMap<String, good::Good>,
     budget: f32,
 }
+
 impl MarketTrait for FskMarket {
     fn get_market_name(&self) -> String {
         "FSK".to_string()
@@ -39,23 +35,7 @@ impl MarketTrait for FskMarket {
         q: f32,
         d: String,
     ) -> Result<String, MarketError> {
-        
-
-        let mut event_loop = EventLoop::try_new().expect("Failed to initialize the event loop!");
-
-        let timer = Timer::from_duration(Duration::from_secs(5));
-
-        event_loop
-            .handle()
-            .insert_source(timer, |deadline, _: &mut (), _shared_data| {
-                println!("Event fired for: {:?}", deadline);
-                TimeoutAction::Drop
-            })
-            .expect("Failed to insert event source!");
-
-        event_loop
-            .dispatch(None, &mut ())
-            .expect("Error during event loop!");
+        todo!()
     }
 
     fn trader_buy_from_market(
