@@ -10,6 +10,19 @@ struct FskMarket {
 }
 
 impl MarketTrait for FskMarket {
+    
+    // input capitale: il prezzo del bene per la quantità del bene
+    // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
+    fn new(capital: f32) -> Result<string, Rc<Refcell<FskMarket>>>{
+
+    } 
+
+    //new con la costante 
+
+    fn new_default() -> Result<string, Rc<Refcell<FskMarket>>>{
+
+    }
+
     fn get_market_name(&self) -> String {
         "FSK".to_string()
     }
