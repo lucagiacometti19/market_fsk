@@ -21,7 +21,6 @@ struct FskMarket {
 impl Notifiable for FskMarket {
     fn add_subscriber(&mut self, subscriber: Box<dyn Notifiable>) {
         self.subs.push(subscriber)
-    }
 
     fn on_event(&mut self, event: Event) {
         // here we apply logic of changing good quantities, as described in
