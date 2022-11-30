@@ -1,80 +1,158 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::Deref;
+use std::rc::{Rc, Weak};
 
+use unitn_market_2022::event::event::{Event, EventKind};
+use unitn_market_2022::event::notifiable::Notifiable;
+use unitn_market_2022::good::good::Good;
+use unitn_market_2022::good::good_error::GoodKindError;
 use unitn_market_2022::good::good_kind::GoodKind;
-use unitn_market_2022::good::*;
+use unitn_market_2022::market::good_label::GoodLabel;
 use unitn_market_2022::market::*;
 struct FskMarket {
-    goods: HashMap<good_kind::GoodKind, good::Good>,
-    locked_goods_to_sell: HashMap<String, good::Good>,
-    budget: f32,
+    goods: HashMap<GoodKind, GoodLabel>,
+    //the key is the token given as ret value of a buy/sell lock fn
+    locked_goods_to_sell: HashMap<String, GoodLabel>,
+    locked_goods_to_buy: HashMap<String, GoodLabel>,
+    subs: Vec<Box<dyn Notifiable>>,
 }
 
-impl MarketTrait for FskMarket {
-    
-    // input capitale: il prezzo del bene per la quantità del bene
-    // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
-    fn new(capital: f32) -> Result<string, Rc<Refcell<FskMarket>>>{
+impl Notifiable for FskMarket {
+    fn add_subscriber(&mut self, subscriber: Box<dyn Notifiable>) {
+        self.subs.push(subscriber)
 
-    } 
+    fn on_event(&mut self, event: Event) {
+        // here we apply logic of changing good quantities, as described in
+        // https://github.com/orgs/WG-AdvancedProgramming/discussions/38#discussioncomment-4167913
+        match event.kind {
+            EventKind::LockedBuy => {}
+            EventKind::Bought => {}
+            EventKind::LockedSell => {}
+            EventKind::Sold => {}
+            EventKind::Wait => {}
+        }
+    }
+}
 
-    //new con la costante 
-
-    fn new_default() -> Result<string, Rc<Refcell<FskMarket>>>{
-
+impl Market for FskMarket {
+    fn new_random() -> Rc<RefCell<dyn Market>>
+    where
+        Self: Sized,
+    {
+        todo!()
     }
 
-    fn get_market_name(&self) -> String {
-        "FSK".to_string()
+    fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>>
+    where
+        Self: Sized,
+    {
+        todo!()
     }
 
+    fn new_file(path: &str) -> Rc<RefCell<dyn Market>>
+    where
+        Self: Sized,
+    {
+        todo!()
+    }
+
+    fn get_name(&self) -> &'static str {
+        "FSK"
+    }
+
+    ///What is this fn needed for? What should it return?
     fn get_budget(&self) -> f32 {
-        self.budget
+        //Budget as sum of every good value in euros
+        /* let mut res = 0.;
+        for (_, good_label) in &self.goods {
+            res += good_label.quantity as f32 * good_label.good_kind.get_default_exchange_rate();
+        }
+        res */
+
+        //Budget as quantity of euros - as in specs
+        let mut res = 0.;
+        for (_, good_label) in &self.goods {
+            if GoodKind::EUR == good_label.good_kind {
+                res += good_label.quantity
+            }
+        }
+        res
     }
 
-    fn get_goods(&self) -> std::collections::HashMap<good_kind::GoodKind, &good::Good> {
-        let mut result: HashMap<GoodKind, &good::Good> = HashMap::new();
+    fn get_buy_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
+        let mut good_quantity = 0.;
 
-        for (k, v) in &self.goods {
-            result.insert(k.clone(), v);
+        //the quantity is not positive
+        if quantity < 0. {
+            return Err(MarketGetterError::NonPositiveQuantityAsked);
+        }
+        //the quantity the trader is asking to buy is higher than the quantity the market owns
+        if let Some(good) = self.goods.get(&kind) {
+            good_quantity = good.quantity;
+            if good.quantity > quantity {
+                todo!("add price calculation and return value");
+            }
+        }
+        //either goodkind was not found in self.goods or its quantity was not enough
+        Err(MarketGetterError::InsufficientGoodQuantityAvailable {
+            requested_good_kind: kind,
+            requested_good_quantity: quantity,
+            available_good_quantity: good_quantity,
+        })
+    }
+
+    fn get_sell_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
+        //the quantity is not positive
+        if quantity < 0. {
+            return Err(MarketGetterError::NonPositiveQuantityAsked);
         }
 
-        result
+        todo!("Price calculation and return value")
     }
 
-    fn lock_trader_buy_from_market(
+    fn get_goods(&self) -> Vec<GoodLabel> {
+        let mut res = Vec::new();
+        for (_, good_label) in &self.goods {
+            res.push(good_label.clone());
+        }
+        res
+    }
+
+    fn lock_buy(
         &mut self,
-        g: good_kind::GoodKind,
-        p: f32,
-        q: f32,
-        d: String,
-    ) -> Result<String, MarketError> {
+        kind_to_buy: GoodKind,
+        quantity_to_buy: f32,
+        bid: f32,
+        trader_name: String,
+    ) -> Result<String, LockBuyError> {
         todo!()
     }
 
-    fn trader_buy_from_market(
-        &mut self,
-        token: String,
-        cash: &mut good::Good,
-    ) -> Result<good::Good, MarketError> {
+    fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
         todo!()
     }
 
-    fn lock_trader_sell_to_market(
+    fn lock_sell(
         &mut self,
-        g: good_kind::GoodKind,
-        qty: f32,
-        price: f32,
-        d: String,
-    ) -> Result<String, MarketError> {
+        kind_to_sell: GoodKind,
+        quantity_to_sell: f32,
+        offer: f32,
+        trader_name: String,
+    ) -> Result<String, LockSellError> {
         todo!()
     }
 
-    fn trader_sell_to_market(
-        &mut self,
-        token: String,
-        good: &mut good::Good,
-    ) -> Result<good::Good, MarketError> {
+    fn sell(&mut self, token: String, good: &mut Good) -> Result<Good, SellError> {
         todo!()
+    }
+}
+
+impl FskMarket {
+    fn notify(&mut self, event: Event) {
+        for subscriber in &mut self.subs {
+            subscriber.as_mut().on_event(event.clone());
+        }
     }
 }
 
