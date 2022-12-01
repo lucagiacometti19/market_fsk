@@ -103,7 +103,6 @@ impl Market for FskMarket {
     fn lock_buy(&mut self, kind_to_buy: GoodKind, quantity_to_buy: f32, bid: f32, trader_name: String) -> Result<String, LockBuyError> {
 
         let mut good = self.goods.get_mut(&kind_to_buy);
-        //println!("{:?}", good);
  
         match &good{
             Some(a) if quantity_to_buy <= 0.0 => return Err(LockBuyError::NonPositiveQuantityToBuy { negative_quantity_to_buy: quantity_to_buy }),
@@ -124,16 +123,14 @@ impl Market for FskMarket {
         
         self.locked_goods_to_buy.insert(token.to_string(), LockContract { token: token.to_string(), good: Good::new(kind_to_buy, good.as_mut().unwrap().quantity), price: bid, expiry_time: u64::MAX});
         
-        //println!("printo i locked_goods_to_buy {:?}", self.locked_goods_to_buy);
 
         //notify lock  
  
-        //update price //COME? funzione matemati a
-        //println!("{:?}", good); 
+        //update price 
+
         return Ok(token.to_string());
     }
  
-
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
  
         //Check if it is the Default good kind
@@ -143,38 +140,37 @@ impl Market for FskMarket {
             }
         }
         else{ //Da cancellare per dubug
-            println!("non è Entrato nell'if let (cancellare)");
-        }
- 
-        //Check if the token exists
-        if let Some(good_lock) = self.locked_goods_to_buy.get_mut(&token){
-            //Check if the token is expired (TODO!!!!!!!)
-            let result = cash.split(good_lock.good.get_qty());
-            /*match result {
-                Some(Err(GoodSplitError::NonPositiveSplitQuantity)),
-                Some(Err(GoodSplitError::NotEnoughQuantityToSplit))
-                Some //tutto ok
-            }*/
-        }else{
-            return Err(BuyError::UnrecognizedToken { unrecognized_token: (token) });
-        }
- 
-        /*
-        if by_positive_quantity <= 0. {
-            return Err(GoodSplitError::NonPositiveSplitQuantity);
+            println!("non è Entrato nell'if let CHE ERRORE METTO? (cancellare)");
         }
 
-        // a Good cannot be split by a quantity that exceeds its own
-        if self.quantity - by_positive_quantity < 0. {
-            return Err(GoodSplitError::NotEnoughQuantityToSplit);
-        }
-        */
-        //notify all the markets of the transaction
-        //update the price of all de goods according to the rules in the Market prices fluctuation section
-        //return the pre-agreed quantity of the pre-agreed good kind
+        let mut good_label = self.goods.get_mut(&cash.get_kind());
  
-        
-        return Err(BuyError::InsufficientGoodQuantity { contained_quantity: (12.0), pre_agreed_quantity: (10.0) })
+        //Check if the token exists
+        match self.get_lock_contract_buy_by_token(&token) {
+            Ok(contract) => {
+                
+                //split from cash the quantity they agreed on and put it in the market inventory
+                let result = cash.split(contract.good.get_qty());
+                match result {
+                    Ok(good) => {
+                        // reset the lock that was in place
+                        self.locked_goods_to_buy.remove_entry(&token);
+                        println!("{:?}", self.get_lock_contract_buy_by_token(&token)); //CANCELLARE è per controllare che sia stato rimosso
+                        
+                        // notify all the markets of the transaction
+                        
+                        // update the price of all de goods according to the rules in the Market prices fluctuation section
+                        
+                        // return the pre-agreed quantity of the pre-agreed good kind 
+                        return Ok(Good{ kind: good.get_kind(), quantity: good.get_qty() }); //CANCELLARE non so se è giusto questo ritorno
+                    },
+                    Err(error) => todo!()   //return Err(BuyError::InsufficientGoodQuantity { contained_quantity: (0.0), pre_agreed_quantity: (0.0) }), //CANCELLARE Capire cosa fare qui
+                }
+                
+            },
+            Err(error) => return Err(error),
+        }
+
     }
 
     fn lock_sell(&mut self, kind_to_sell: GoodKind, quantity_to_sell: f32, offer: f32, trader_name: String) -> Result<String, LockSellError> {
@@ -247,29 +243,29 @@ impl Market for FskMarket {
 
 
 impl FskMarket {
-    fn get_lock_contract_buy_by_token(&self, token: String) -> Result<&LockContract, BuyError> {
+    fn get_lock_contract_buy_by_token(&self, token: &String) -> Result<&LockContract, BuyError> {
 
         let first = self.locked_goods_to_buy.keys().next();
 
-        let contract = self.locked_goods_to_buy.get(&token);
+        let contract = self.locked_goods_to_buy.get(token);
         if let Some(contract) = contract{
             return Ok(contract);
         }else{
             if !self.locked_goods_to_buy.is_empty(){ //first will be None so let's return Error
 
                 match first {
-                    Some(expired) => {if token < *expired{
+                    Some(expired) => {if *token < *expired{
                         println!("token < *expired\n");
-                        return Err(BuyError::ExpiredToken { expired_token: token });
+                        return Err(BuyError::ExpiredToken { expired_token: token.clone() });
                     }}
-                    None => return Err(BuyError::UnrecognizedToken { unrecognized_token: token }), //CANCELLARE vedere se è giusto tornare questo errore
+                    None => return Err(BuyError::UnrecognizedToken { unrecognized_token: token.clone() }), //CANCELLARE vedere se è giusto tornare questo errore
                 }
 
             }else{
-                return Err(BuyError::UnrecognizedToken { unrecognized_token: token }) //CANCELLARE vedere se è giusto tornare questo errore
+                return Err(BuyError::UnrecognizedToken { unrecognized_token: token.clone() }) //CANCELLARE vedere se è giusto tornare questo errore
             }
         }
-        return Err(BuyError::UnrecognizedToken { unrecognized_token: token });
+        return Err(BuyError::UnrecognizedToken { unrecognized_token: token.clone() });
 
     }
 }
@@ -291,8 +287,16 @@ fn main() {
     //println!("{:?}",market.borrow_mut().lock_buy(GoodKind::EUR, 100.0, 150.0, "Trader1".to_string()));
     //capire se worka
     match token {
-        Ok(asd) => {let res = market.get_lock_contract_buy_by_token("00a".to_string());
-        println!("{:?}", res);} //stampa o lock
+        Ok(asd) => {
+            let mut res = market.get_lock_contract_buy_by_token(&"00a".to_string());
+            println!("{:?}", res);
+            match res {
+                Ok(contract) => {market.buy(asd, &mut contract.good);}
+                Err(error) => {println!("{:?}", error);}
+            }
+         //stampa o lock //capire come passare il good
+        }
         Err(poi) => {println!("{:?}", poi)}, //stampa l'errore
+    
     }
 }
