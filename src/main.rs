@@ -1,14 +1,18 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque, BTreeMap};
 use std::rc::{Rc, Weak};
 
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
+use unitn_market_2022::good::consts::DEFAULT_GOOD_KIND;
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
 use unitn_market_2022::{market::*, subscribe_each_other};
+
+const LOCK_INITIAL_TTL : u64 = 9;
+
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
     //the key is the token given as ret value of a buy/sell lock fn
@@ -48,6 +52,10 @@ impl ContractsArchive {
         self.contracts_by_token
             .insert(contract.token.clone(), contract.clone());
         self.contracts_by_timestamp.push_back(contract.clone());
+    }
+
+    fn consume_contract(&mut self, token: &String) -> Option<Rc<LockContract>>{
+        self.contracts_by_token.remove(token)
     }
 
     fn pop_expired(&mut self, timestamp: u64) -> Option<Rc<LockContract>> {
@@ -244,11 +252,80 @@ impl Market for FskMarket {
         offer: f32,
         trader_name: String,
     ) -> Result<String, LockSellError> {
-        todo!()
+        //1
+        if quantity_to_sell < 0. {
+            return Err(LockSellError::NonPositiveQuantityToSell { negative_quantity_to_sell: quantity_to_sell });
+        }
+        
+        //2
+        if offer < 0. {
+            return Err(LockSellError::NonPositiveOffer { negative_offer: offer });
+        }
+
+        //5
+        if self.get_budget() < offer{
+            return Err(LockSellError::InsufficientDefaultGoodQuantityAvailable { offered_good_kind: kind_to_sell, offered_good_quantity: offer, available_good_quantity: self.get_budget() })
+        }
+
+        //6
+        let highest_acceptable_offer = self.goods.get(&kind_to_sell).unwrap().exchange_rate_sell * quantity_to_sell; //using unwrap because good_kinds are predetermined and goods map must contain the according GoodLabel
+        if highest_acceptable_offer < offer {
+            return Err(LockSellError::OfferTooHigh { offered_good_kind: kind_to_sell, offered_good_quantity: quantity_to_sell, high_offer: offer, highest_acceptable_offer});
+        }
+
+        //we chose to decrease the budget when goods are locked, to avoid having to keep track of locked default good. In case the lock expires, default currency will be put back in goods.
+        self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity -= offer;
+
+        let token = self.sell_contracts_archive.new_token();
+
+        self.sell_contracts_archive.add_contract(&Rc::new(LockContract{token: token.clone(), good: Good::new(kind_to_sell.clone(), quantity_to_sell), price: offer, expiry_time: self.time + LOCK_INITIAL_TTL}));
+        
+        self.notify(Event { kind: EventKind::LockedSell, good_kind: kind_to_sell, quantity: quantity_to_sell, price: offer });
+        
+        Ok(token)
     }
 
     fn sell(&mut self, token: String, good: &mut Good) -> Result<Good, SellError> {
-        todo!()
+        let op_contract = self.sell_contracts_archive.contracts_by_token.get(&token);
+
+        //1
+        if op_contract.is_none(){
+            if self.sell_contracts_archive.expired_contracts.contains(&token) {
+                return Err(SellError::ExpiredToken { expired_token: token });
+            }
+
+            return Err(SellError::UnrecognizedToken { unrecognized_token: token });
+        }
+
+        let contract = op_contract.unwrap();
+        
+        //2
+        if contract.expiry_time <= self.time{
+            return Err(SellError::ExpiredToken { expired_token: token });
+        }
+
+        //3
+        if contract.good.get_kind() != good.get_kind(){
+            return Err(SellError::WrongGoodKind { wrong_good_kind: good.get_kind(), pre_agreed_kind: contract.good.get_kind() });
+        }
+
+        //4
+        if good.get_qty() < contract.good.get_qty() {
+            return Err(SellError::InsufficientGoodQuantity { contained_quantity: good.get_qty(), pre_agreed_quantity: contract.good.get_qty() })
+        }
+
+        //everything checks out, the sell can proceed
+
+        //this is the default currency that is going to be returned to the seller (the trader)
+        let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell(...)
+
+        self.goods.get_mut(&good.get_kind()).unwrap().quantity += good.get_qty();
+
+        self.sell_contracts_archive.consume_contract(&token);
+
+        self.notify(Event { kind: EventKind::Sold, good_kind: good.get_kind(), quantity: good.get_qty(), price: good_to_return.get_qty() });
+
+        Ok(good_to_return)
     }
 }
 
