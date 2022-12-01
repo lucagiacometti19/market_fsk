@@ -10,6 +10,8 @@ use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
 use unitn_market_2022::{market::*, subscribe_each_other};
 struct FskMarket {
+    //GoodKind::EUR
+    //GoodLabel
     goods: HashMap<GoodKind, GoodLabel>,
     //the key is the token given as ret value of a buy/sell lock fn
     buy_contracts_archive: ContractsArchive,
@@ -93,6 +95,7 @@ impl Notifiable for FskMarket {
 }
  
 impl Market for FskMarket {
+
     fn new_random() -> Rc<RefCell<dyn Market>>
     where
         Self: Sized,
@@ -100,12 +103,16 @@ impl Market for FskMarket {
         todo!()
     }
 
+    // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
+
+    
     fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>>
     where
         Self: Sized,
     {
         todo!()
     }
+
 
     fn new_file(path: &str) -> Rc<RefCell<dyn Market>>
     where
@@ -268,11 +275,13 @@ fn test_add_subscriber() {
     //test goods
     let mut test_goods: HashMap<GoodKind, GoodLabel> = HashMap::new();
 
+    
+    //1m->100 -----> creo 5 goods da 20 e ho fatto
     test_goods.insert(
         GoodKind::EUR,
         GoodLabel {
             good_kind: GoodKind::EUR,
-            quantity: 12501.5,
+            quantity: 12501.5, //20
             exchange_rate_buy: 1.002,
             exchange_rate_sell: 0.982,
         },
