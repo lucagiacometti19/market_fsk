@@ -1,5 +1,5 @@
 use std::borrow::BorrowMut;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
@@ -24,8 +24,8 @@ struct LockContract{
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
     //the key is the token given as ret value of a buy/sell lock fn
-    locked_goods_to_sell: HashMap<String, LockContract>,
-    locked_goods_to_buy: HashMap<String, LockContract>,
+    locked_goods_to_sell: BTreeMap<String, LockContract>,
+    locked_goods_to_buy: BTreeMap<String, LockContract>,
 }
 
 impl Notifiable for FskMarket {
@@ -101,29 +101,9 @@ impl Market for FskMarket {
     }
 
     fn lock_buy(&mut self, kind_to_buy: GoodKind, quantity_to_buy: f32, bid: f32, trader_name: String) -> Result<String, LockBuyError> {
-        /*
-        kind_to_buy : type of good the trader want to buy
-        quantity_to_buy : the quantity of good the trader wants to buy
-        bid : the total amount of default currency the trader will give in exchange for the total amount of goods the trader will receive
-        trader_name : the name of the trader
- 
-        Failure Cases
- 
-        The Lock procedure can fail if one of the following conditions is met.
- 
-        The specified good is already locked and the market allows just 1 lock per good. //frega un cazzo
-        The maximum number of different goods that can be locked at the same time has been reached. //da capire
-        The market doesn't have enough quantity available (i.e. not locked) of the requested Good.
-        The bid is below the minimum acceptable by the market.
- 
- 
-        */
- 
-        
- 
-        //let bene  = binding.iter_mut().find(|x| x.good_kind == kind_to_buy);
+
         let mut good = self.goods.get_mut(&kind_to_buy);
-        println!("{:?}", good);
+        //println!("{:?}", good);
  
         match &good{
             Some(a) if quantity_to_buy <= 0.0 => return Err(LockBuyError::NonPositiveQuantityToBuy { negative_quantity_to_buy: quantity_to_buy }),
@@ -131,29 +111,29 @@ impl Market for FskMarket {
             Some(a) if a.quantity < quantity_to_buy => return  Err(LockBuyError::InsufficientGoodQuantityAvailable { requested_good_kind: (kind_to_buy), requested_good_quantity: (quantity_to_buy), available_good_quantity: (a.quantity) }), //controllo se c'è abbastanza quantity 
             Some(a) if bid/quantity_to_buy < a.exchange_rate_buy => return Err(LockBuyError::BidTooLow { requested_good_kind: (kind_to_buy), requested_good_quantity: (quantity_to_buy), low_bid: (bid), lowest_acceptable_bid: (a.exchange_rate_buy) }),
             Some(_)=>(),
-            None => return Err(LockBuyError::MaxAllowedLocksReached), //in realtà il kind non è stato trovato ma non esiste quell'errore
+            None => return Err(LockBuyError::MaxAllowedLocksReached), //CANCELLARE in realtà il kind non è stato trovato ma non esiste quell'errore
         }
-        //Everything is okay
+
+        //Everything is okay, so i decrease the quantity of good that is locked
         good.as_mut().unwrap().quantity -= quantity_to_buy;
  
-
         //register (via the market-local Good Metadata) the fact that quantity quantity_to_buy of good kind_to_buy is to be bought for price bid.
         let charset = "1234567890abcdefghijklmnopqrstuwxyz";
         let token = generate(5, charset);
-        println!("[{}]", token);
+        println!("[{}]\n", token);
         
         self.locked_goods_to_buy.insert(token.to_string(), LockContract { token: token.to_string(), good: Good::new(kind_to_buy, good.as_mut().unwrap().quantity), price: bid, expiry_time: u64::MAX});
         
-        println!("printo i locked_goods_to_buy {:?}", self.locked_goods_to_buy);
+        //println!("printo i locked_goods_to_buy {:?}", self.locked_goods_to_buy);
+
         //notify lock  
  
-        //update price //COME?
+        //update price //COME? funzione matemati a
         //println!("{:?}", good); 
         return Ok(token.to_string());
-        
- 
     }
  
+
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
  
         //Check if it is the Default good kind
@@ -161,6 +141,9 @@ impl Market for FskMarket {
             if kind_of_good != GoodKind::EUR{
                 return Err(BuyError::GoodKindNotDefault { non_default_good_kind: kind_of_good });
             }
+        }
+        else{ //Da cancellare per dubug
+            println!("non è Entrato nell'if let (cancellare)");
         }
  
         //Check if the token exists
@@ -189,9 +172,6 @@ impl Market for FskMarket {
         //notify all the markets of the transaction
         //update the price of all de goods according to the rules in the Market prices fluctuation section
         //return the pre-agreed quantity of the pre-agreed good kind
- 
- 
-        
  
         
         return Err(BuyError::InsufficientGoodQuantity { contained_quantity: (12.0), pre_agreed_quantity: (10.0) })
@@ -261,7 +241,39 @@ impl Market for FskMarket {
 
     todo!()
 }
+
 }
+
+
+
+impl FskMarket {
+    fn get_lock_contract_buy_by_token(&self, token: String) -> Result<&LockContract, BuyError> {
+
+        let first = self.locked_goods_to_buy.keys().next();
+
+        let contract = self.locked_goods_to_buy.get(&token);
+        if let Some(contract) = contract{
+            return Ok(contract);
+        }else{
+            if !self.locked_goods_to_buy.is_empty(){ //first will be None so let's return Error
+
+                match first {
+                    Some(expired) => {if token < *expired{
+                        println!("token < *expired\n");
+                        return Err(BuyError::ExpiredToken { expired_token: token });
+                    }}
+                    None => return Err(BuyError::UnrecognizedToken { unrecognized_token: token }), //CANCELLARE vedere se è giusto tornare questo errore
+                }
+
+            }else{
+                return Err(BuyError::UnrecognizedToken { unrecognized_token: token }) //CANCELLARE vedere se è giusto tornare questo errore
+            }
+        }
+        return Err(BuyError::UnrecognizedToken { unrecognized_token: token });
+
+    }
+}
+
 
 fn main() {
     let mut goods = HashMap::new();
@@ -269,7 +281,18 @@ fn main() {
     goods.insert(GoodKind::EUR, GoodLabel{ good_kind: GoodKind::EUR, quantity: 50.0, exchange_rate_buy: 3.0, exchange_rate_sell: 3.0 });
     goods.insert(GoodKind::YEN, GoodLabel{ good_kind: GoodKind::YEN, quantity: 50.0, exchange_rate_buy: 3.0, exchange_rate_sell: 3.0 });
     
-    let mut market = FskMarket{ goods: goods, locked_goods_to_sell: HashMap::new(), locked_goods_to_buy: HashMap::new() };
+    let mut market = FskMarket{ goods: goods, locked_goods_to_sell: BTreeMap::new(), locked_goods_to_buy: BTreeMap::new() };
 
     market.borrow_mut().lock_buy(GoodKind::EUR, 10.0, 150.0, "Trader1".to_string());
+    market.borrow_mut().lock_buy(GoodKind::USD, 10.0, 150.0, "Trader1".to_string());
+    let token = market.borrow_mut().lock_buy(GoodKind::EUR, 10.0, 150.0, "Trader1".to_string());
+    market.borrow_mut().lock_buy(GoodKind::EUR, 10.0, 150.0, "Trader1".to_string());
+    market.borrow_mut().lock_buy(GoodKind::YEN, 10.0, 150.0, "Trader1".to_string());
+    //println!("{:?}",market.borrow_mut().lock_buy(GoodKind::EUR, 100.0, 150.0, "Trader1".to_string()));
+    //capire se worka
+    match token {
+        Ok(asd) => {let res = market.get_lock_contract_buy_by_token("00a".to_string());
+        println!("{:?}", res);} //stampa o lock
+        Err(poi) => {println!("{:?}", poi)}, //stampa l'errore
+    }
 }
