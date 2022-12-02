@@ -45,6 +45,6 @@ dependencies = [
 
 [[package]]
 name = "unitn_market_2022"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+git://advancedprogramming.disi.unitn.it/index"
-checksum = "c0546520f1ef24e986ab03d80530bc0206ba376d6ea81ef5b94a3e50539d7fa4"
+checksum = "51435ff960b717057d6f50656bbec5722087e2641c2a6629f3b0d75d6d9666cf"
