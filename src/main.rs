@@ -1,10 +1,13 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ptr::read_unaligned;
 use std::rc::{Rc, Weak};
 
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
+use unitn_market_2022::good::consts::{DEFAULT_EUR_YEN_EXCHANGE_RATE, DEFAULT_EUR_USD_EXCHANGE_RATE, DEFAULT_EUR_YUAN_EXCHANGE_RATE};
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
@@ -12,6 +15,8 @@ use unitn_market_2022::{market::*, subscribe_each_other};
 struct FskMarket {
     //GoodKind::EUR
     //GoodLabel
+    //TIME -> 0
+    //il resto inzializza con new
     goods: HashMap<GoodKind, GoodLabel>,
     //the key is the token given as ret value of a buy/sell lock fn
     buy_contracts_archive: ContractsArchive,
@@ -110,7 +115,21 @@ impl Market for FskMarket {
     where
         Self: Sized,
     {
-        todo!()
+        let mut goods_result = HashMap::new();
+
+        goods_result.insert(GoodKind::EUR, GoodLabel{ good_kind: GoodKind::EUR,  quantity: eur,  exchange_rate_buy: 1., exchange_rate_sell: 1.});
+        goods_result.insert(GoodKind::YEN, GoodLabel{ good_kind: GoodKind::YEN,  quantity: yen,  exchange_rate_buy: DEFAULT_EUR_YEN_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_YEN_EXCHANGE_RATE });
+        goods_result.insert(GoodKind::USD, GoodLabel{ good_kind: GoodKind::USD,  quantity: usd,  exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_USD_EXCHANGE_RATE });
+        goods_result.insert(GoodKind::YUAN,GoodLabel{ good_kind: GoodKind::YUAN, quantity: yuan, exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE, exchange_rate_sell: 1.0/DEFAULT_EUR_YUAN_EXCHANGE_RATE});
+
+        let mut result: Rc<RefCell<dyn Market>> = Rc::new(RefCell::new(FskMarket{
+            goods: goods_result,
+            buy_contracts_archive: ContractsArchive::new(),
+            sell_contracts_archive: ContractsArchive::new(),
+            subs: vec![],
+            time: 0,
+        }));
+        return  result;
     }
 
 
