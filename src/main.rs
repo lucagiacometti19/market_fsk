@@ -1,9 +1,10 @@
 use chrono::Utc;
 mod tests;
 
+use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::rc::Rc;
 use rand::Rng;
@@ -545,17 +546,28 @@ impl FskMarket {
 
     fn initialize_log_file(market_name: String) -> RefCell<File> {
         let log_file_name = format!("log_{}.txt", market_name);
-        RefCell::new(File::create(log_file_name).unwrap())
+        RefCell::new(OpenOptions::new().append(true).open(log_file_name).unwrap())
     }
 
     fn write_log_entry(&self, entry: String) {
-        self.log_output.borrow_mut().write(format!(
+        if self.log_output.borrow_mut().write(format!(
             "{}|{}|{}\n",
             self.get_name(),
-            Utc::now().format("%y:%m:%d:%H:%M:%S:%4f"),
+            Utc::now().format("%y:%m:%d:%H:%M:%S:%3f"),
             entry
-        ).as_bytes());
+        ).as_bytes()).is_err(){
+            println!("{}: Couldn't write to log file", self.get_name())
+        }
         //YY:MM:DD:HH:MM:SEC:MSES
+    }
+
+    fn write_log_market_init(&self){
+        self.write_log_entry(format!("\nMARKET_INITIALIZATION\nEUR: {:+e}\nUSD: {:+e}\nYEN: {:+e}\nYUAN: {:+e}\nEND_MARKET_INITIALIZATION",
+            self.goods.get(&GoodKind::EUR).unwrap().quantity,
+            self.goods.get(&GoodKind::USD).unwrap().quantity,
+            self.goods.get(&GoodKind::YEN).unwrap().quantity,
+            self.goods.get(&GoodKind::YUAN).unwrap().quantity
+        ));
     }
 
     fn write_log_buy_ok(
