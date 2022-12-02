@@ -10,7 +10,7 @@ use std::rc::Rc;
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
-use unitn_market_2022::good::consts::DEFAULT_GOOD_KIND;
+use unitn_market_2022::good::consts::{DEFAULT_EUR_YEN_EXCHANGE_RATE, DEFAULT_EUR_USD_EXCHANGE_RATE, DEFAULT_EUR_YUAN_EXCHANGE_RATE};
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
@@ -119,6 +119,7 @@ impl Notifiable for FskMarket {
 }
 
 impl Market for FskMarket {
+
     fn new_random() -> Rc<RefCell<dyn Market>>
     where
         Self: Sized,
@@ -126,12 +127,31 @@ impl Market for FskMarket {
         todo!()
     }
 
+    // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
+
+    
     fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>>
     where
         Self: Sized,
     {
-        todo!()
+        let mut goods_result = HashMap::new();
+
+        goods_result.insert(GoodKind::EUR, GoodLabel{ good_kind: GoodKind::EUR,  quantity: eur,  exchange_rate_buy: 1., exchange_rate_sell: 1.});
+        goods_result.insert(GoodKind::YEN, GoodLabel{ good_kind: GoodKind::YEN,  quantity: yen,  exchange_rate_buy: DEFAULT_EUR_YEN_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_YEN_EXCHANGE_RATE });
+        goods_result.insert(GoodKind::USD, GoodLabel{ good_kind: GoodKind::USD,  quantity: usd,  exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_USD_EXCHANGE_RATE });
+        goods_result.insert(GoodKind::YUAN,GoodLabel{ good_kind: GoodKind::YUAN, quantity: yuan, exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE, exchange_rate_sell: 1.0/DEFAULT_EUR_YUAN_EXCHANGE_RATE});
+
+        let mut result: Rc<RefCell<dyn Market>> = Rc::new(RefCell::new(FskMarket{
+            goods: goods_result,
+            buy_contracts_archive: ContractsArchive::new(),
+            sell_contracts_archive: ContractsArchive::new(),
+            subs: vec![],
+            time: 0,
+            log_output: FskMarket::initialize_log_file("FSK".to_string()),
+        }));
+        return  result;
     }
+
 
     fn new_file(path: &str) -> Rc<RefCell<dyn Market>>
     where
