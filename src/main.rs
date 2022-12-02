@@ -187,63 +187,58 @@ impl Market for FskMarket {
         bid: f32,
         trader_name: String,
     ) -> Result<String, LockBuyError> {
-        let get_buy_price_result = self.get_buy_price(kind_to_buy, quantity_to_buy);
-        let mut good = self.goods.get_mut(&kind_to_buy);
-        match get_buy_price_result {
-            Ok(min_bid) => match &good {
-                Some(_) if bid < 0. => {
-                    return Err(LockBuyError::NonPositiveBid { negative_bid: bid })
-                }
 
-                Some(good_label) if bid < min_bid => {
-                    return Err(LockBuyError::BidTooLow {
-                        requested_good_kind: (kind_to_buy),
-                        requested_good_quantity: (quantity_to_buy),
-                        low_bid: (bid),
-                        lowest_acceptable_bid: (good_label.exchange_rate_buy),
-                    })
-                }
-                _ => (),
-            },
-            Err(err) => match err {
-                MarketGetterError::NonPositiveQuantityAsked => {
-                    return Err(LockBuyError::NonPositiveQuantityToBuy {
-                        negative_quantity_to_buy: quantity_to_buy,
-                    })
-                }
-                MarketGetterError::InsufficientGoodQuantityAvailable {
-                    requested_good_kind,
-                    requested_good_quantity,
-                    available_good_quantity,
-                } => {
-                    return Err(LockBuyError::InsufficientGoodQuantityAvailable {
-                        requested_good_kind,
-                        requested_good_quantity,
-                        available_good_quantity,
-                    })
-                }
-            },
+        //1
+        if quantity_to_buy < 0. {
+            return Err(LockBuyError::NonPositiveQuantityToBuy { negative_quantity_to_buy: quantity_to_buy, })
         }
-        //Everything is okay
-        good.as_mut().unwrap().quantity -= quantity_to_buy;
+        
+        //2
+        if bid < 0. {
+            return Err(LockBuyError::NonPositiveBid { negative_bid: bid })
+        }
 
+        let get_buy_price_result = self.get_buy_price(kind_to_buy.clone(), quantity_to_buy).unwrap();
+        
+        let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
+
+        //5
+        if good.quantity < quantity_to_buy{
+            return Err(LockBuyError::InsufficientGoodQuantityAvailable {
+                requested_good_kind: kind_to_buy,
+                requested_good_quantity: quantity_to_buy,
+                available_good_quantity: good.quantity,
+            })
+        }
+
+        //6
+        if bid < get_buy_price_result{
+            return Err(LockBuyError::BidTooLow { requested_good_kind: kind_to_buy.clone(), requested_good_quantity: quantity_to_buy, low_bid: bid, lowest_acceptable_bid: get_buy_price_result });
+        }
+
+        //Everything is okay
+        good.quantity -= quantity_to_buy;
+
+        //create the token
         let token = self.buy_contracts_archive.new_token();
 
+        //register (via the market-local Good Metadata) the fact that quantity quantity_to_buy of good kind_to_buy is to be bought for price bid.
         self.buy_contracts_archive
             .add_contract(&Rc::new(LockContract {
                 token: token.to_string(),
-                good: Good::new(kind_to_buy, good.as_mut().unwrap().quantity),
+                good: Good::new(kind_to_buy.clone(), quantity_to_buy),
                 price: bid,
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
 
-        //register (via the market-local Good Metadata) the fact that quantity quantity_to_buy of good kind_to_buy is to be bought for price bid.
+        
         self.notify(Event {
             kind: EventKind::LockedBuy,
-            good_kind: kind_to_buy,
+            good_kind: kind_to_buy.clone(),
             quantity: quantity_to_buy,
             price: bid,
         });
+
         return Ok(token.to_string());
     }
 
@@ -269,47 +264,46 @@ impl Market for FskMarket {
             });
         }
 
+        let contract = op_contract.unwrap();
+
         //2
         if contract.expiry_time <= self.time {
-            return Err(SellError::ExpiredToken {
+            return Err(BuyError::ExpiredToken {
                 expired_token: token,
             });
         }
 
-        let contract = op_contract.unwrap();
-
-        //Check if it is the Default good kind
+        //3
         if cash.get_kind() != DEFAULT_GOOD_KIND{
             return Err(BuyError::GoodKindNotDefault { non_default_good_kind: cash.get_kind() });
         }
 
-        let mut good_label = self.goods.get_mut(&cash.get_kind());
- 
-        //Check if the token exists
-        match self.get_lock_contract_buy_by_token(&token) {
-            Ok(contract) => {
-                
-                //split from cash the quantity they agreed on and put it in the market inventory
-                let result = cash.split(contract.good.get_qty());
-                match result {
-                    Ok(good) => {
-                        // reset the lock that was in place
-                        self.locked_goods_to_buy.remove_entry(&token);
-                        println!("{:?}", self.get_lock_contract_buy_by_token(&token)); //CANCELLARE è per controllare che sia stato rimosso
-                        
-                        // notify all the markets of the transaction
-                        
-                        // update the price of all de goods according to the rules in the Market prices fluctuation section
-                        
-                        // return the pre-agreed quantity of the pre-agreed good kind 
-                        return Ok(Good{ kind: good.get_kind(), quantity: good.get_qty() }); //CANCELLARE non so se è giusto questo ritorno
-                    },
-                    Err(error) => todo!()   //return Err(BuyError::InsufficientGoodQuantity { contained_quantity: (0.0), pre_agreed_quantity: (0.0) }), //CANCELLARE Capire cosa fare qui
-                }
-                
-            },
-            Err(error) => return Err(error),
+        //4
+        if cash.get_qty() < contract.good.get_qty() {
+            return Err(BuyError::InsufficientGoodQuantity {
+                contained_quantity: cash.get_qty(),
+                pre_agreed_quantity: contract.good.get_qty(),
+            });
         }
+
+        //everything checks out, the buy can proceed
+
+        //removing the pre-agreed quantity from cash
+        cash.split(contract.good.get_qty());
+
+        //put the pre-agreed quantity in the market
+        self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += contract.good.get_qty();
+        
+        let good_to_return = Good::new(contract.good.get_kind(), contract.good.get_qty());
+        
+        //update the price of all de goods according to the rules in the Market prices fluctuation section
+
+        //notify all the markets of the transaction
+        self.notify(Event { kind: (EventKind::Bought), good_kind: good_to_return.get_kind(), quantity: good_to_return.get_qty(), price: contract.price });
+        
+        //reset the lock that was in place
+        self.buy_contracts_archive.consume_contract(&token);
+        Ok(good_to_return)
     }
 
     fn lock_sell(
@@ -698,5 +692,5 @@ fn test_sell() {
 }
 
 fn main() {
-    println!("Hello, world!");
+    
 }
