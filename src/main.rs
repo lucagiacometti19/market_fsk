@@ -97,6 +97,16 @@ impl Notifiable for FskMarket {
             EventKind::Sold => {}
             EventKind::Wait => (),
         }
+
+        //restore locked default currency for expired sell
+        while let Some(expired_contract) = self.sell_contracts_archive.pop_expired(self.time) {
+            self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += expired_contract.price;
+        }
+        
+        //restore locked good for expired buyout
+        while let Some(expired_contract) = self.buy_contracts_archive.pop_expired(self.time) {
+            self.goods.get_mut(&expired_contract.good.get_kind()).unwrap().quantity += expired_contract.price;
+        }
     }
 }
 
