@@ -1,7 +1,6 @@
 use chrono::Utc;
 mod tests;
 
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
@@ -185,14 +184,18 @@ impl Market for FskMarket {
         goods_result.insert(GoodKind::USD, GoodLabel{ good_kind: GoodKind::USD,  quantity: usd,  exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_USD_EXCHANGE_RATE });
         goods_result.insert(GoodKind::YUAN,GoodLabel{ good_kind: GoodKind::YUAN, quantity: yuan, exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE, exchange_rate_sell: 1.0/DEFAULT_EUR_YUAN_EXCHANGE_RATE});
 
-        Rc::new(RefCell::new(FskMarket{
+        let new_market = Rc::new(RefCell::new(FskMarket{
             goods: goods_result,
             buy_contracts_archive: ContractsArchive::new(),
             sell_contracts_archive: ContractsArchive::new(),
             subs: vec![],
             time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
-        }))
+        }));
+
+        new_market.borrow().write_log_market_init();
+
+        new_market
     }
 
 
@@ -546,7 +549,7 @@ impl FskMarket {
 
     fn initialize_log_file(market_name: String) -> RefCell<File> {
         let log_file_name = format!("log_{}.txt", market_name);
-        RefCell::new(OpenOptions::new().append(true).open(log_file_name).unwrap())
+        RefCell::new(OpenOptions::new().create(true).append(true).open(log_file_name).unwrap())
     }
 
     fn write_log_entry(&self, entry: String) {
