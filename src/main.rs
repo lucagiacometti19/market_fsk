@@ -22,7 +22,7 @@ struct FskMarket {
     //the key is the token given as ret value of a buy/sell lock fn
     buy_contracts_archive: ContractsArchive,
     sell_contracts_archive: ContractsArchive,
-    log_output: Option<File>,
+    log_output: File,
     subs: Vec<Box<dyn Notifiable>>,
     time: u64,
 }
@@ -386,7 +386,7 @@ impl Market for FskMarket {
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
 
-        self._write_log_sell_ok(trader_name, kind_to_sell, quantity_to_sell, offer, &token);
+        self.write_log_sell_ok(trader_name, kind_to_sell, quantity_to_sell, offer, &token);
 
         self.notify(Event {
             kind: EventKind::LockedSell,
@@ -480,11 +480,9 @@ impl FskMarket {
         }
     }
 
-    fn initialize_log_file(&mut self) {
-        let log_file_name = format!("log_{}.txt", self.get_name());
-        self.log_output = File::create(log_file_name).ok();
-
-        assert!(self.log_output.is_some());
+    fn initialize_log_file(market_name: String) -> File {
+        let log_file_name = format!("log_{}.txt", market_name);
+        File::create(log_file_name).unwrap()
     }
 
     fn write_log_entry(&self, entry: String) {
@@ -497,7 +495,7 @@ impl FskMarket {
         //YY:MM:DD:HH:MM:SEC:MSES
     }
 
-    fn _write_log_buy_ok(
+    fn write_log_buy_ok(
         &self,
         trader_name: String,
         kind_to_buy: GoodKind,
@@ -511,8 +509,8 @@ impl FskMarket {
         ));
     }
 
-    fn _write_log_buy_error(
-        &self,
+    fn write_log_lock_buy_error(
+        & mut self,
         trader_name: String,
         kind_to_buy: GoodKind,
         quantity_to_buy: f32,
@@ -524,8 +522,8 @@ impl FskMarket {
         ));
     }
 
-    fn _write_log_sell_ok(
-        &self,
+    fn write_log_sell_ok(
+        & mut self,
         trader_name: String,
         kind_to_sell: GoodKind,
         quantity_to_sell: f32,
@@ -539,7 +537,7 @@ impl FskMarket {
     }
 
     fn write_log_lock_sell_error(
-        &self,
+        & mut self,
         trader_name: String,
         kind_to_sell: GoodKind,
         quantity_to_sell: f32,
