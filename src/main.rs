@@ -3,11 +3,12 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ptr::read_unaligned;
 use std::rc::{Rc, Weak};
+use rand::Rng;
 
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
-use unitn_market_2022::good::consts::{DEFAULT_EUR_YEN_EXCHANGE_RATE, DEFAULT_EUR_USD_EXCHANGE_RATE, DEFAULT_EUR_YUAN_EXCHANGE_RATE};
+use unitn_market_2022::good::consts::{DEFAULT_EUR_YEN_EXCHANGE_RATE, DEFAULT_EUR_USD_EXCHANGE_RATE, DEFAULT_EUR_YUAN_EXCHANGE_RATE, STARTING_CAPITAL};
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
@@ -105,7 +106,30 @@ impl Market for FskMarket {
     where
         Self: Sized,
     {
-        todo!()
+        let mut rng = rand::thread_rng();
+        //rng.gen_range(0..10))
+        let mut remainder = STARTING_CAPITAL;
+
+        let mut temp = rng.gen_range(0..remainder as i32);
+
+        let YEN_QTY = temp as f32 * DEFAULT_EUR_YEN_EXCHANGE_RATE;
+        remainder -= temp as f32;
+
+        temp = rng.gen_range(0..remainder as i32);
+
+        let USD_QTY = temp as f32 * DEFAULT_EUR_USD_EXCHANGE_RATE;
+        remainder -= temp as f32;
+
+        temp = rng.gen_range(0..remainder as i32);
+
+        let YUAN_QTY = temp as f32 * DEFAULT_EUR_YUAN_EXCHANGE_RATE;
+        remainder -= temp as f32;
+
+        let EUR_QTY = remainder;
+
+        FskMarket::new_with_quantities(EUR_QTY, YEN_QTY, USD_QTY, YUAN_QTY)
+
+
     }
 
     // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
@@ -122,14 +146,13 @@ impl Market for FskMarket {
         goods_result.insert(GoodKind::USD, GoodLabel{ good_kind: GoodKind::USD,  quantity: usd,  exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_USD_EXCHANGE_RATE });
         goods_result.insert(GoodKind::YUAN,GoodLabel{ good_kind: GoodKind::YUAN, quantity: yuan, exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE, exchange_rate_sell: 1.0/DEFAULT_EUR_YUAN_EXCHANGE_RATE});
 
-        let mut result: Rc<RefCell<dyn Market>> = Rc::new(RefCell::new(FskMarket{
+        Rc::new(RefCell::new(FskMarket{
             goods: goods_result,
             buy_contracts_archive: ContractsArchive::new(),
             sell_contracts_archive: ContractsArchive::new(),
             subs: vec![],
             time: 0,
-        }));
-        return  result;
+        }))
     }
 
 
