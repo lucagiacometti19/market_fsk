@@ -105,7 +105,7 @@ impl Notifiable for FskMarket {
         
         //restore locked good for expired buyout
         while let Some(expired_contract) = self.buy_contracts_archive.pop_expired(self.time) {
-            self.goods.get_mut(&expired_contract.good.get_kind()).unwrap().quantity += expired_contract.price;
+            self.goods.get_mut(&expired_contract.good.get_kind()).unwrap().quantity += expired_contract.good.get_qty();
         }
     }
 }
@@ -169,17 +169,20 @@ impl Market for FskMarket {
             return Err(MarketGetterError::NonPositiveQuantityAsked);
         }
 
-        let good = self.goods.get(&kind).unwrap();
+        let maximum_price = quantity / self.goods.get(&kind).unwrap().exchange_rate_sell;
+        //how much money the market pay (at max) for the good
 
-        if quantity > good.quantity {
+        let available_default_good = self.get_budget();
+
+        if available_default_good > maximum_price {
             return Err(MarketGetterError::InsufficientGoodQuantityAvailable {
                 requested_good_kind: kind,
-                requested_good_quantity: quantity,
-                available_good_quantity: good.quantity,
+                requested_good_quantity: quantity, //TODO: check if this is the right variable to return
+                available_good_quantity: maximum_price,
             });
         }
 
-        Ok(quantity / good.exchange_rate_sell)
+        Ok(maximum_price)
     }
 
     fn get_goods(&self) -> Vec<GoodLabel> {
@@ -269,7 +272,7 @@ impl Market for FskMarket {
         trader_name: String,
     ) -> Result<String, LockSellError> {
         //1
-        if quantity_to_sell < 0. {
+        if quantity_to_sell <= 0. {
             return Err(LockSellError::NonPositiveQuantityToSell {
                 negative_quantity_to_sell: quantity_to_sell,
             });
@@ -292,9 +295,7 @@ impl Market for FskMarket {
         }
 
         //6
-        //using unwrap because good_kinds are predetermined and goods map must contain the according GoodLabel
-        let highest_acceptable_offer =
-            quantity_to_sell / self.goods.get(&kind_to_sell).unwrap().exchange_rate_sell;
+        let highest_acceptable_offer = self.get_sell_price(kind_to_sell, quantity_to_sell).unwrap_or(0.);
         if highest_acceptable_offer < offer {
             return Err(LockSellError::OfferTooHigh {
                 offered_good_kind: kind_to_sell,
@@ -312,7 +313,7 @@ impl Market for FskMarket {
         self.sell_contracts_archive
             .add_contract(&Rc::new(LockContract {
                 token: token.clone(),
-                good: Good::new(kind_to_sell.clone(), quantity_to_sell),
+                good: Good::new(kind_to_sell, quantity_to_sell),
                 price: offer,
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
@@ -377,7 +378,8 @@ impl Market for FskMarket {
         //this is the default currency that is going to be returned to the seller (the trader)
         let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell(...)
 
-        self.goods.get_mut(&good.get_kind()).unwrap().quantity += good.get_qty();
+        self.goods.get_mut(&good.get_kind()).unwrap().quantity += good.split(contract.good.get_qty()).unwrap().get_qty();
+        //unwrapping should be safe as errors error conditions were alread checked in gate 4
 
         self.sell_contracts_archive.consume_contract(&token);
 
