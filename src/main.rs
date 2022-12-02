@@ -4,6 +4,7 @@ mod tests;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
+use std::io::prelude::*;
 use std::rc::Rc;
 
 use random_string::generate;
@@ -22,7 +23,7 @@ struct FskMarket {
     //the key is the token given as ret value of a buy/sell lock fn
     buy_contracts_archive: ContractsArchive,
     sell_contracts_archive: ContractsArchive,
-    log_output: File,
+    log_output: RefCell<File>,
     subs: Vec<Box<dyn Notifiable>>,
     time: u64,
 }
@@ -480,18 +481,18 @@ impl FskMarket {
         }
     }
 
-    fn initialize_log_file(market_name: String) -> File {
+    fn initialize_log_file(market_name: String) -> RefCell<File> {
         let log_file_name = format!("log_{}.txt", market_name);
-        File::create(log_file_name).unwrap()
+        RefCell::new(File::create(log_file_name).unwrap())
     }
 
     fn write_log_entry(&self, entry: String) {
-        println!(
+        self.log_output.borrow_mut().write(format!(
             "{}|{}|{}\n",
             self.get_name(),
             Utc::now().format("%y:%m:%d:%H:%M:%S:%4f"),
             entry
-        );
+        ).as_bytes());
         //YY:MM:DD:HH:MM:SEC:MSES
     }
 
@@ -510,7 +511,7 @@ impl FskMarket {
     }
 
     fn write_log_lock_buy_error(
-        & mut self,
+        &self,
         trader_name: String,
         kind_to_buy: GoodKind,
         quantity_to_buy: f32,
@@ -523,7 +524,7 @@ impl FskMarket {
     }
 
     fn write_log_sell_ok(
-        & mut self,
+        &self,
         trader_name: String,
         kind_to_sell: GoodKind,
         quantity_to_sell: f32,
@@ -537,7 +538,7 @@ impl FskMarket {
     }
 
     fn write_log_lock_sell_error(
-        & mut self,
+        &self,
         trader_name: String,
         kind_to_sell: GoodKind,
         quantity_to_sell: f32,
