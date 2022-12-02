@@ -9,3 +9,4 @@ edition = "2021"
 unitn_market_2022 = {version = "1.0.4", registry = "kellnr"}
 random-string = "1.0.0"
 chrono = "0.4.23"
+rand = "0.8.4"
