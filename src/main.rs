@@ -172,8 +172,7 @@ impl Market for FskMarket {
             subs: vec![],
             time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
-        }));
-        return  result;
+        }))
     }
 
 
