@@ -5,11 +5,12 @@ use std::rc::{Rc, Weak};
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
+use unitn_market_2022::event::wrapper::NotifiableMarketWrapper;
 use unitn_market_2022::good::consts::DEFAULT_GOOD_KIND;
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
-use unitn_market_2022::{market::*, subscribe_each_other};
+use unitn_market_2022::{market::*, subscribe_each_other, wait_one_day};
 
 const LOCK_INITIAL_TTL: u64 = 9;
 
@@ -18,7 +19,7 @@ struct FskMarket {
     //the key is the token given as ret value of a buy/sell lock fn
     buy_contracts_archive: ContractsArchive,
     sell_contracts_archive: ContractsArchive,
-    subs: Vec<Weak<RefCell<dyn Notifiable>>>,
+    subs: Vec<Box<dyn Notifiable>>,
     time: u64,
 }
 
@@ -82,8 +83,7 @@ struct LockContract {
 
 impl Notifiable for FskMarket {
     fn add_subscriber(&mut self, subscriber: Box<dyn Notifiable>) {
-        //self.subs.push(Rc::downgrade(&Rc::new(RefCell::new(*subscriber))))
-        todo!()
+        self.subs.push(subscriber);
     }
 
     fn on_event(&mut self, event: Event) {
@@ -187,53 +187,64 @@ impl Market for FskMarket {
         bid: f32,
         trader_name: String,
     ) -> Result<String, LockBuyError> {
+        let get_buy_price_result = self.get_buy_price(kind_to_buy, quantity_to_buy);
         let mut good = self.goods.get_mut(&kind_to_buy);
+        match get_buy_price_result {
+            Ok(min_bid) => match &good {
+                Some(_) if bid < 0. => {
+                    return Err(LockBuyError::NonPositiveBid { negative_bid: bid })
+                }
 
-        match &good {
-            Some(a) if quantity_to_buy <= 0.0 => {
-                return Err(LockBuyError::NonPositiveQuantityToBuy {
-                    negative_quantity_to_buy: quantity_to_buy,
-                })
-            }
-            Some(a) if bid <= 0.0 => {
-                return Err(LockBuyError::NonPositiveBid { negative_bid: bid })
-            }
-            Some(a) if a.quantity < quantity_to_buy => {
-                return Err(LockBuyError::InsufficientGoodQuantityAvailable {
-                    requested_good_kind: (kind_to_buy),
-                    requested_good_quantity: (quantity_to_buy),
-                    available_good_quantity: (a.quantity),
-                })
-            } //controllo se c'è abbastanza quantity
-            Some(a) if bid / quantity_to_buy < a.exchange_rate_buy => {
-                return Err(LockBuyError::BidTooLow {
-                    requested_good_kind: (kind_to_buy),
-                    requested_good_quantity: (quantity_to_buy),
-                    low_bid: (bid),
-                    lowest_acceptable_bid: (a.exchange_rate_buy),
-                })
-            }
-            Some(_) => (),
-            None => return Err(LockBuyError::MaxAllowedLocksReached), //in realtà il kind non è stato trovato ma non esiste quell'errore
+                Some(good_label) if bid < min_bid => {
+                    return Err(LockBuyError::BidTooLow {
+                        requested_good_kind: (kind_to_buy),
+                        requested_good_quantity: (quantity_to_buy),
+                        low_bid: (bid),
+                        lowest_acceptable_bid: (good_label.exchange_rate_buy),
+                    })
+                }
+                _ => (),
+            },
+            Err(err) => match err {
+                MarketGetterError::NonPositiveQuantityAsked => {
+                    return Err(LockBuyError::NonPositiveQuantityToBuy {
+                        negative_quantity_to_buy: quantity_to_buy,
+                    })
+                }
+                MarketGetterError::InsufficientGoodQuantityAvailable {
+                    requested_good_kind,
+                    requested_good_quantity,
+                    available_good_quantity,
+                } => {
+                    return Err(LockBuyError::InsufficientGoodQuantityAvailable {
+                        requested_good_kind,
+                        requested_good_quantity,
+                        available_good_quantity,
+                    })
+                }
+            },
         }
         //Everything is okay
         good.as_mut().unwrap().quantity -= quantity_to_buy;
 
-        //register (via the market-local Good Metadata) the fact that quantity quantity_to_buy of good kind_to_buy is to be bought for price bid.
+        let token = self.buy_contracts_archive.new_token();
 
-        /*         println!("[{}]", token);
-
-        self.locked_goods_to_buy.insert(
-            token.to_string(),
-            LockContract {
+        self.buy_contracts_archive
+            .add_contract(&Rc::new(LockContract {
                 token: token.to_string(),
                 good: Good::new(kind_to_buy, good.as_mut().unwrap().quantity),
                 price: bid,
-                expiry_time: u64::MAX,
-            },
-        );
-        return Ok(token.to_string()); */
-        todo!()
+                expiry_time: self.time + LOCK_INITIAL_TTL,
+            }));
+
+        //register (via the market-local Good Metadata) the fact that quantity quantity_to_buy of good kind_to_buy is to be bought for price bid.
+        self.notify(Event {
+            kind: EventKind::LockedBuy,
+            good_kind: kind_to_buy,
+            quantity: quantity_to_buy,
+            price: bid,
+        });
+        return Ok(token.to_string());
     }
 
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
@@ -248,14 +259,14 @@ impl Market for FskMarket {
         trader_name: String,
     ) -> Result<String, LockSellError> {
         //1
-        if quantity_to_sell <= 0. {
+        if quantity_to_sell < 0. {
             return Err(LockSellError::NonPositiveQuantityToSell {
                 negative_quantity_to_sell: quantity_to_sell,
             });
         }
 
         //2
-        if offer <= 0. {
+        if offer < 0. {
             return Err(LockSellError::NonPositiveOffer {
                 negative_offer: offer,
             });
@@ -374,10 +385,7 @@ impl Market for FskMarket {
 impl FskMarket {
     fn notify(&mut self, event: Event) {
         for sub in &mut self.subs {
-            match sub.upgrade() {
-                Option::None => { /* market was dropped */ }
-                Option::Some(m) => (*m).borrow_mut().on_event(event.clone()),
-            };
+            sub.on_event(event.clone());
         }
     }
 }
@@ -452,23 +460,24 @@ fn test_on_event() {
 #[test]
 fn test_notify() {
     //dummy market creation - wrong way to create a market!
-    let mut test_market_1 = FskMarket {
+    let mut test_market_1 = Rc::new(RefCell::new(FskMarket {
         goods: HashMap::new(),
         subs: Vec::new(),
         time: 0,
         buy_contracts_archive: ContractsArchive::new(),
         sell_contracts_archive: ContractsArchive::new(),
-    };
+    }));
 
-    let mut test_market_2 = FskMarket {
+    let mut test_market_2 = Rc::new(RefCell::new(FskMarket {
         goods: HashMap::new(),
         subs: Vec::new(),
         time: 0,
         buy_contracts_archive: ContractsArchive::new(),
         sell_contracts_archive: ContractsArchive::new(),
-    };
+    }));
 
-    subscribe_each_other!();
+    /* subscribe_each_other!(test_market_1.clone(), test_market_2.clone());
+    assert_eq!(test_market_1.subs[0], 1); */
 }
 
 #[test]
@@ -496,25 +505,134 @@ fn test_sell() {
     );
 
     //dummy markets creation - wrong way to create markets!
-    let mut test_market_1 = FskMarket {
+    let mut test_market_1 = Rc::new(RefCell::new(FskMarket {
         goods: test_goods,
         subs: Vec::new(),
         time: 0,
         buy_contracts_archive: ContractsArchive::new(),
         sell_contracts_archive: ContractsArchive::new(),
-    };
+    }));
 
-    let offer = test_market_1.get_sell_price(GoodKind::USD, 1000.).unwrap();
-    let result_token = test_market_1.lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
-    if let Ok(token) = result_token {
-        let result_sell = test_market_1.sell(token, &mut Good::new(GoodKind::USD, 1000.));
-        if let Ok(returned_good) = result_sell {
-            assert!(returned_good.get_qty() > 0.);
-        } else if let Err(sell_error) = result_sell {
-            println!("{:?}", sell_error);
+    //lock_sell & sell err: UnrecognizedToken
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(_) = result_token {
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell("token".to_string(), &mut Good::new(GoodKind::YEN, 1000.));
+        if let Err(sell_error) = result_sell {
+            assert_eq!(
+                sell_error,
+                SellError::UnrecognizedToken {
+                    unrecognized_token: "token".to_string()
+                }
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity,
+                1100.
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity,
+                100000. - offer
+            );
         }
-    } else if let Err(lock_sell_error) = result_token {
-        println!("{:?}", lock_sell_error);
+    }
+
+    //lock_sell & sell err: ExpiredToken
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(token) = result_token {
+        for _ in 0..10 {
+            wait_one_day!(test_market_1);
+        }
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell(token.clone(), &mut Good::new(GoodKind::USD, 1000.));
+        if let Err(sell_error) = result_sell {
+            assert_eq!(
+                sell_error,
+                SellError::ExpiredToken {
+                    expired_token: token.clone()
+                }
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity,
+                1100.
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity,
+                100000. - offer
+            );
+        }
+    }
+
+    //sell no err
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(token) = result_token {
+        wait_one_day!(test_market_1);
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell(token, &mut Good::new(GoodKind::USD, 1000.));
+        if let Ok(returned_good) = result_sell {
+            assert!(returned_good.get_qty() >= 0.);
+            assert!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity
+                    <= 100000.
+            );
+            assert!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity
+                    >= 1100.
+            );
+        }
     }
 }
 
