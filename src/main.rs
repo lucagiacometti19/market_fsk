@@ -1,53 +1,124 @@
-use std::borrow::BorrowMut;
-use std::collections::{HashMap, BTreeMap};
 use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::{Rc, Weak};
 
 use random_string::generate;
+use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
+use unitn_market_2022::event::wrapper::NotifiableMarketWrapper;
 use unitn_market_2022::good::consts::DEFAULT_GOOD_KIND;
 use unitn_market_2022::good::good::Good;
-use unitn_market_2022::good::good_error::{GoodKindError, GoodSplitError};
 use unitn_market_2022::good::good_kind::GoodKind;
-use unitn_market_2022::event::event::Event;
-use unitn_market_2022::market::*;
 use unitn_market_2022::market::good_label::GoodLabel;
+use unitn_market_2022::{market::*, subscribe_each_other, wait_one_day};
 
-#[derive(Debug)]
-struct LockContract{
-    token: String,
-    good: Good,
-    price: f32,
-    expiry_time: u64
-}
+const LOCK_INITIAL_TTL: u64 = 9;
 
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
     //the key is the token given as ret value of a buy/sell lock fn
-    locked_goods_to_sell: BTreeMap<String, LockContract>,
-    locked_goods_to_buy: BTreeMap<String, LockContract>,
+    buy_contracts_archive: ContractsArchive,
+    sell_contracts_archive: ContractsArchive,
+    subs: Vec<Box<dyn Notifiable>>,
+    time: u64,
+}
+
+struct ContractsArchive {
+    contracts_by_token: HashMap<String, Rc<LockContract>>,
+    expired_contracts: HashSet<String>,
+    contracts_by_timestamp: VecDeque<Rc<LockContract>>,
+}
+
+impl ContractsArchive {
+    fn new() -> ContractsArchive {
+        ContractsArchive {
+            contracts_by_token: HashMap::new(),
+            expired_contracts: HashSet::new(),
+            contracts_by_timestamp: VecDeque::new(),
+        }
+    }
+
+    fn new_token(&self) -> String {
+        let charset = "1234567890abcdefghijklmnopqrstuwxyz";
+        loop {
+            let res = generate(10, charset);
+            if !self.contracts_by_token.contains_key(&res) {
+                return res;
+            }
+        }
+    }
+
+    fn add_contract(&mut self, contract: &Rc<LockContract>) {
+        //will always work since token is unique
+        self.contracts_by_token
+            .insert(contract.token.clone(), contract.clone());
+        self.contracts_by_timestamp.push_back(contract.clone());
+    }
+
+    fn consume_contract(&mut self, token: &String) -> Option<Rc<LockContract>> {
+        self.contracts_by_token.remove(token)
+    }
+
+    fn pop_expired(&mut self, timestamp: u64) -> Option<Rc<LockContract>> {
+        if !self.contracts_by_timestamp.is_empty() {
+            if self.contracts_by_timestamp.get(0).unwrap().expiry_time >= timestamp {
+                //can't fail no need to check option
+                let res = self.contracts_by_timestamp.pop_front().unwrap();
+                self.contracts_by_token.remove(&res.token);
+                self.expired_contracts.insert(res.token.clone());
+                return Some(res);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Debug)]
+struct LockContract {
+    token: String,
+    good: Good,
+    price: f32,
+    expiry_time: u64,
 }
 
 impl Notifiable for FskMarket {
     fn add_subscriber(&mut self, subscriber: Box<dyn Notifiable>) {
-        todo!()
+        self.subs.push(subscriber);
     }
 
     fn on_event(&mut self, event: Event) {
-        todo!()
+        // here we apply logic of changing good quantities, as described in https://github.com/orgs/WG-AdvancedProgramming/discussions/38#discussioncomment-4167913
+        //every event triggers a new tick
+        self.time += 1;
+        match event.kind {
+            EventKind::LockedBuy => {}
+            EventKind::Bought => {}
+            EventKind::LockedSell => {}
+            EventKind::Sold => {}
+            EventKind::Wait => (),
+        }
     }
 }
 
 impl Market for FskMarket {
-    fn new_random() -> Rc<RefCell<dyn Market>> where Self: Sized {
+    fn new_random() -> Rc<RefCell<dyn Market>>
+    where
+        Self: Sized,
+    {
         todo!()
     }
 
-    fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>> where Self: Sized {
+    fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>>
+    where
+        Self: Sized,
+    {
         todo!()
     }
 
-    fn new_file(path: &str) -> Rc<RefCell<dyn Market>> where Self: Sized {
+    fn new_file(path: &str) -> Rc<RefCell<dyn Market>>
+    where
+        Self: Sized,
+    {
         todo!()
     }
 
@@ -55,14 +126,9 @@ impl Market for FskMarket {
         "FSK"
     }
 
+    ///What is this fn needed for? What should it return?
     fn get_budget(&self) -> f32 {
-        let mut res = 0.;
-        for (_, good_label) in &self.goods {
-            if GoodKind::EUR == good_label.good_kind {
-                res += good_label.quantity
-            }
-        }
-        res
+        self.goods.get(&DEFAULT_GOOD_KIND).unwrap().quantity
     }
 
     fn get_buy_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
@@ -89,58 +155,132 @@ impl Market for FskMarket {
 
     fn get_sell_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
         //the quantity is not positive
-        if quantity < 0. {
+        if quantity <= 0. {
             return Err(MarketGetterError::NonPositiveQuantityAsked);
         }
 
-        todo!("Price calculation and return value")
+        let good = self.goods.get(&kind).unwrap();
+
+        if quantity > good.quantity {
+            return Err(MarketGetterError::InsufficientGoodQuantityAvailable {
+                requested_good_kind: kind,
+                requested_good_quantity: quantity,
+                available_good_quantity: good.quantity,
+            });
+        }
+
+        Ok(quantity / good.exchange_rate_sell)
     }
 
     fn get_goods(&self) -> Vec<GoodLabel> {
-         self.goods.values().cloned().collect::<Vec<GoodLabel>>()
+        let mut res = Vec::new();
+        for (_, good_label) in &self.goods {
+            res.push(good_label.clone());
+        }
+        res
     }
 
-    fn lock_buy(&mut self, kind_to_buy: GoodKind, quantity_to_buy: f32, bid: f32, trader_name: String) -> Result<String, LockBuyError> {
-
+    fn lock_buy(
+        &mut self,
+        kind_to_buy: GoodKind,
+        quantity_to_buy: f32,
+        bid: f32,
+        trader_name: String,
+    ) -> Result<String, LockBuyError> {
+        let get_buy_price_result = self.get_buy_price(kind_to_buy, quantity_to_buy);
         let mut good = self.goods.get_mut(&kind_to_buy);
- 
-        match &good{
-            Some(a) if quantity_to_buy <= 0.0 => return Err(LockBuyError::NonPositiveQuantityToBuy { negative_quantity_to_buy: quantity_to_buy }),
-            Some(a) if bid <= 0.0 => return Err(LockBuyError::NonPositiveBid { negative_bid: bid }),
-            Some(a) if a.quantity < quantity_to_buy => return  Err(LockBuyError::InsufficientGoodQuantityAvailable { requested_good_kind: (kind_to_buy), requested_good_quantity: (quantity_to_buy), available_good_quantity: (a.quantity) }), //controllo se c'è abbastanza quantity 
-            Some(a) if bid/quantity_to_buy < a.exchange_rate_buy => return Err(LockBuyError::BidTooLow { requested_good_kind: (kind_to_buy), requested_good_quantity: (quantity_to_buy), low_bid: (bid), lowest_acceptable_bid: (a.exchange_rate_buy) }),
-            Some(_)=>(),
-            None => return Err(LockBuyError::MaxAllowedLocksReached), //CANCELLARE in realtà il kind non è stato trovato ma non esiste quell'errore
+        match get_buy_price_result {
+            Ok(min_bid) => match &good {
+                Some(_) if bid < 0. => {
+                    return Err(LockBuyError::NonPositiveBid { negative_bid: bid })
+                }
+
+                Some(good_label) if bid < min_bid => {
+                    return Err(LockBuyError::BidTooLow {
+                        requested_good_kind: (kind_to_buy),
+                        requested_good_quantity: (quantity_to_buy),
+                        low_bid: (bid),
+                        lowest_acceptable_bid: (good_label.exchange_rate_buy),
+                    })
+                }
+                _ => (),
+            },
+            Err(err) => match err {
+                MarketGetterError::NonPositiveQuantityAsked => {
+                    return Err(LockBuyError::NonPositiveQuantityToBuy {
+                        negative_quantity_to_buy: quantity_to_buy,
+                    })
+                }
+                MarketGetterError::InsufficientGoodQuantityAvailable {
+                    requested_good_kind,
+                    requested_good_quantity,
+                    available_good_quantity,
+                } => {
+                    return Err(LockBuyError::InsufficientGoodQuantityAvailable {
+                        requested_good_kind,
+                        requested_good_quantity,
+                        available_good_quantity,
+                    })
+                }
+            },
         }
-
-        //Everything is okay, so i decrease the quantity of good that is locked
+        //Everything is okay
         good.as_mut().unwrap().quantity -= quantity_to_buy;
- 
+
+        let token = self.buy_contracts_archive.new_token();
+
+        self.buy_contracts_archive
+            .add_contract(&Rc::new(LockContract {
+                token: token.to_string(),
+                good: Good::new(kind_to_buy, good.as_mut().unwrap().quantity),
+                price: bid,
+                expiry_time: self.time + LOCK_INITIAL_TTL,
+            }));
+
         //register (via the market-local Good Metadata) the fact that quantity quantity_to_buy of good kind_to_buy is to be bought for price bid.
-        let charset = "1234567890abcdefghijklmnopqrstuwxyz";
-        let token = generate(5, charset);
-        println!("[{}]\n", token);
-        
-        self.locked_goods_to_buy.insert(token.to_string(), LockContract { token: token.to_string(), good: Good::new(kind_to_buy, good.as_mut().unwrap().quantity), price: bid, expiry_time: u64::MAX});
-        
-
-        //notify lock  
- 
-        //update price 
-
+        self.notify(Event {
+            kind: EventKind::LockedBuy,
+            good_kind: kind_to_buy,
+            quantity: quantity_to_buy,
+            price: bid,
+        });
         return Ok(token.to_string());
     }
- 
+
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
- 
-        //Check if it is the Default good kind
-        if let Some(kind_of_good) = Some(cash.get_kind()){
-            if kind_of_good != GoodKind::EUR{
-                return Err(BuyError::GoodKindNotDefault { non_default_good_kind: kind_of_good });
+        
+        //check if the token is valid or expired or unrecognized
+        let op_contract = self.buy_contracts_archive.contracts_by_token.get(&token);
+        
+        //1
+        if op_contract.is_none() {
+            if self
+                .buy_contracts_archive
+                .expired_contracts
+                .contains(&token)
+            {
+                return Err(BuyError::ExpiredToken {
+                    expired_token: token,
+                });
             }
+
+            return Err(BuyError::UnrecognizedToken {
+                unrecognized_token: token,
+            });
         }
-        else{ //Da cancellare per dubug
-            println!("non è Entrato nell'if let CHE ERRORE METTO? (cancellare)");
+
+        //2
+        if contract.expiry_time <= self.time {
+            return Err(SellError::ExpiredToken {
+                expired_token: token,
+            });
+        }
+
+        let contract = op_contract.unwrap();
+
+        //Check if it is the Default good kind
+        if cash.get_kind() != DEFAULT_GOOD_KIND{
+            return Err(BuyError::GoodKindNotDefault { non_default_good_kind: cash.get_kind() });
         }
 
         let mut good_label = self.goods.get_mut(&cash.get_kind());
@@ -170,133 +310,393 @@ impl Market for FskMarket {
             },
             Err(error) => return Err(error),
         }
-
     }
 
-    fn lock_sell(&mut self, kind_to_sell: GoodKind, quantity_to_sell: f32, offer: f32, trader_name: String) -> Result<String, LockSellError> {
-        /*let token = generate(5, "1234567890abcdefghijklmnopqrstuvwxyz");
-
+    fn lock_sell(
+        &mut self,
+        kind_to_sell: GoodKind,
+        quantity_to_sell: f32,
+        offer: f32,
+        trader_name: String,
+    ) -> Result<String, LockSellError> {
         //1
         if quantity_to_sell < 0. {
-            return Err(LockSellError::NonPositiveQuantityToSell { negative_quantity_to_sell: quantity_to_sell });
+            return Err(LockSellError::NonPositiveQuantityToSell {
+                negative_quantity_to_sell: quantity_to_sell,
+            });
         }
-        
+
         //2
         if offer < 0. {
-            return Err(LockSellError::NonPositiveOffer { negative_offer: offer });
+            return Err(LockSellError::NonPositiveOffer {
+                negative_offer: offer,
+            });
         }
 
         //5
-        if self.get_budget() < offer{
-            return Err(LockSellError::InsufficientDefaultGoodQuantityAvailable { offered_good_kind: kind_to_sell, offered_good_quantity: offer, available_good_quantity: self.get_budget() })
+        if self.get_budget() < offer {
+            return Err(LockSellError::InsufficientDefaultGoodQuantityAvailable {
+                offered_good_kind: kind_to_sell,
+                offered_good_quantity: offer,
+                available_good_quantity: self.get_budget(),
+            });
         }
 
         //6
-        let highest_acceptable_offer = self.goods.get(&kind_to_sell).unwrap().exchange_rate_sell * quantity_to_sell; //using unwrap because good_kinds are predetermined and goods map must contain the according GoodLabel
+        //using unwrap because good_kinds are predetermined and goods map must contain the according GoodLabel
+        let highest_acceptable_offer =
+            quantity_to_sell / self.goods.get(&kind_to_sell).unwrap().exchange_rate_sell;
         if highest_acceptable_offer < offer {
-            return Err(LockSellError::OfferTooHigh { offered_good_kind: kind_to_sell, offered_good_quantity: quantity_to_sell, high_offer: offer, highest_acceptable_offer});
+            return Err(LockSellError::OfferTooHigh {
+                offered_good_kind: kind_to_sell,
+                offered_good_quantity: quantity_to_sell,
+                high_offer: offer,
+                highest_acceptable_offer,
+            });
         }
 
-        self.locked_goods_to_sell.insert(token, LockContract{token, good: Good{kind: kind_to_sell, quantity: quantity_to_sell}, price: offer, expiry_time: 0 /* TODO: change time */});
-        Ok(token)*/
+        //we chose to decrease the budget when goods are locked, to avoid having to keep track of locked default good. In case the lock expires, default currency will be put back in goods.
+        self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity -= offer;
 
-        todo!()
+        let token = self.sell_contracts_archive.new_token();
+
+        self.sell_contracts_archive
+            .add_contract(&Rc::new(LockContract {
+                token: token.clone(),
+                good: Good::new(kind_to_sell.clone(), quantity_to_sell),
+                price: offer,
+                expiry_time: self.time + LOCK_INITIAL_TTL,
+            }));
+
+        self.notify(Event {
+            kind: EventKind::LockedSell,
+            good_kind: kind_to_sell,
+            quantity: quantity_to_sell,
+            price: offer,
+        });
+
+        Ok(token)
     }
 
     fn sell(&mut self, token: String, good: &mut Good) -> Result<Good, SellError> {
-        /*let op_contract = self.locked_goods_to_sell.get(&token);
+        let op_contract = self.sell_contracts_archive.contracts_by_token.get(&token);
 
         //1
-        if op_contract.is_none(){
-            return Err(SellError::UnrecognizedToken { unrecognized_token: token });
+        if op_contract.is_none() {
+            if self
+                .sell_contracts_archive
+                .expired_contracts
+                .contains(&token)
+            {
+                return Err(SellError::ExpiredToken {
+                    expired_token: token,
+                });
+            }
+
+            return Err(SellError::UnrecognizedToken {
+                unrecognized_token: token,
+            });
         }
 
         let contract = op_contract.unwrap();
 
         //2
-        if contract.expiry_time < 0 /* TODO: get market time */{
-            return Err(SellError::ExpiredToken { expired_token: token });
+        if contract.expiry_time <= self.time {
+            return Err(SellError::ExpiredToken {
+                expired_token: token,
+            });
         }
 
         //3
-        if contract.good.get_kind() != good.get_kind(){
-            return Err(SellError::WrongGoodKind { wrong_good_kind: good.get_kind(), pre_agreed_kind: contract.good.get_kind() });
+        if contract.good.get_kind() != good.get_kind() {
+            return Err(SellError::WrongGoodKind {
+                wrong_good_kind: good.get_kind(),
+                pre_agreed_kind: contract.good.get_kind(),
+            });
         }
 
         //4
         if good.get_qty() < contract.good.get_qty() {
-            return Err(SellError::InsufficientGoodQuantity { contained_quantity: good.get_qty(), pre_agreed_quantity: contract.good.get_qty() })
+            return Err(SellError::InsufficientGoodQuantity {
+                contained_quantity: good.get_qty(),
+                pre_agreed_quantity: contract.good.get_qty(),
+            });
         }
 
         //everything checks out, the sell can proceed
 
+        //this is the default currency that is going to be returned to the seller (the trader)
+        let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell(...)
+
         self.goods.get_mut(&good.get_kind()).unwrap().quantity += good.get_qty();
 
-        Ok(Good{kind: DEFAULT_GOOD_KIND, quantity: contract.price})
-    }*/
+        self.sell_contracts_archive.consume_contract(&token);
 
-    todo!()
+        self.notify(Event {
+            kind: EventKind::Sold,
+            good_kind: good.get_kind(),
+            quantity: good.get_qty(),
+            price: good_to_return.get_qty(),
+        });
+
+        Ok(good_to_return)
+    }
 }
-
-}
-
-
 
 impl FskMarket {
-    fn get_lock_contract_buy_by_token(&self, token: &String) -> Result<&LockContract, BuyError> {
-
-        let first = self.locked_goods_to_buy.keys().next();
-
-        let contract = self.locked_goods_to_buy.get(token);
-        if let Some(contract) = contract{
-            return Ok(contract);
-        }else{
-            if !self.locked_goods_to_buy.is_empty(){ //first will be None so let's return Error
-
-                match first {
-                    Some(expired) => {if *token < *expired{
-                        println!("token < *expired\n");
-                        return Err(BuyError::ExpiredToken { expired_token: token.clone() });
-                    }}
-                    None => return Err(BuyError::UnrecognizedToken { unrecognized_token: token.clone() }), //CANCELLARE vedere se è giusto tornare questo errore
-                }
-
-            }else{
-                return Err(BuyError::UnrecognizedToken { unrecognized_token: token.clone() }) //CANCELLARE vedere se è giusto tornare questo errore
-            }
+    fn notify(&mut self, event: Event) {
+        for sub in &mut self.subs {
+            sub.on_event(event.clone());
         }
-        return Err(BuyError::UnrecognizedToken { unrecognized_token: token.clone() });
-
     }
 }
 
+#[test]
+fn test_add_subscriber() {
+    //test goods
+    let mut test_goods: HashMap<GoodKind, GoodLabel> = HashMap::new();
+
+    test_goods.insert(
+        GoodKind::EUR,
+        GoodLabel {
+            good_kind: GoodKind::EUR,
+            quantity: 12501.5,
+            exchange_rate_buy: 1.002,
+            exchange_rate_sell: 0.982,
+        },
+    );
+
+    test_goods.insert(
+        GoodKind::USD,
+        GoodLabel {
+            good_kind: GoodKind::USD,
+            quantity: 12.65,
+            exchange_rate_buy: 1.32,
+            exchange_rate_sell: 0.895,
+        },
+    );
+
+    //dummy markets creation - wrong way to create markets!
+    let mut test_market_1 = FskMarket {
+        goods: test_goods,
+        subs: Vec::new(),
+        time: 0,
+        buy_contracts_archive: ContractsArchive::new(),
+        sell_contracts_archive: ContractsArchive::new(),
+    };
+
+    let mut test_market_2 = FskMarket {
+        goods: HashMap::new(),
+        subs: Vec::new(),
+        time: 0,
+        buy_contracts_archive: ContractsArchive::new(),
+        sell_contracts_archive: ContractsArchive::new(),
+    };
+
+    test_market_1.add_subscriber(Box::new(test_market_2));
+    assert!(!test_market_1.subs.is_empty())
+}
+
+#[test]
+fn test_on_event() {
+    //dummy market creation - wrong way to create a market!
+    let mut test_market_1 = FskMarket {
+        goods: HashMap::new(),
+        subs: Vec::new(),
+        time: 0,
+        buy_contracts_archive: ContractsArchive::new(),
+        sell_contracts_archive: ContractsArchive::new(),
+    };
+
+    test_market_1.on_event(Event {
+        kind: EventKind::Wait,
+        good_kind: GoodKind::EUR,
+        quantity: 0.,
+        price: 0.,
+    });
+
+    assert_ne!(test_market_1.time, 0)
+}
+
+#[test]
+fn test_notify() {
+    //dummy market creation - wrong way to create a market!
+    let mut test_market_1 = Rc::new(RefCell::new(FskMarket {
+        goods: HashMap::new(),
+        subs: Vec::new(),
+        time: 0,
+        buy_contracts_archive: ContractsArchive::new(),
+        sell_contracts_archive: ContractsArchive::new(),
+    }));
+
+    let mut test_market_2 = Rc::new(RefCell::new(FskMarket {
+        goods: HashMap::new(),
+        subs: Vec::new(),
+        time: 0,
+        buy_contracts_archive: ContractsArchive::new(),
+        sell_contracts_archive: ContractsArchive::new(),
+    }));
+
+    /* subscribe_each_other!(test_market_1.clone(), test_market_2.clone());
+    assert_eq!(test_market_1.subs[0], 1); */
+}
+
+#[test]
+fn test_sell() {
+    let mut test_goods: HashMap<GoodKind, GoodLabel> = HashMap::new();
+
+    test_goods.insert(
+        GoodKind::EUR,
+        GoodLabel {
+            good_kind: GoodKind::EUR,
+            quantity: 100000.,
+            exchange_rate_buy: 1.,
+            exchange_rate_sell: 1.,
+        },
+    );
+
+    test_goods.insert(
+        GoodKind::USD,
+        GoodLabel {
+            good_kind: GoodKind::USD,
+            quantity: 1100.,
+            exchange_rate_buy: 1.32,
+            exchange_rate_sell: 0.895,
+        },
+    );
+
+    //dummy markets creation - wrong way to create markets!
+    let mut test_market_1 = Rc::new(RefCell::new(FskMarket {
+        goods: test_goods,
+        subs: Vec::new(),
+        time: 0,
+        buy_contracts_archive: ContractsArchive::new(),
+        sell_contracts_archive: ContractsArchive::new(),
+    }));
+
+    //lock_sell & sell err: UnrecognizedToken
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(_) = result_token {
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell("token".to_string(), &mut Good::new(GoodKind::YEN, 1000.));
+        if let Err(sell_error) = result_sell {
+            assert_eq!(
+                sell_error,
+                SellError::UnrecognizedToken {
+                    unrecognized_token: "token".to_string()
+                }
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity,
+                1100.
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity,
+                100000. - offer
+            );
+        }
+    }
+
+    //lock_sell & sell err: ExpiredToken
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(token) = result_token {
+        for _ in 0..10 {
+            wait_one_day!(test_market_1);
+        }
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell(token.clone(), &mut Good::new(GoodKind::USD, 1000.));
+        if let Err(sell_error) = result_sell {
+            assert_eq!(
+                sell_error,
+                SellError::ExpiredToken {
+                    expired_token: token.clone()
+                }
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity,
+                1100.
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity,
+                100000. - offer
+            );
+        }
+    }
+
+    //sell no err
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(token) = result_token {
+        wait_one_day!(test_market_1);
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell(token, &mut Good::new(GoodKind::USD, 1000.));
+        if let Ok(returned_good) = result_sell {
+            assert!(returned_good.get_qty() >= 0.);
+            assert!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity
+                    <= 100000.
+            );
+            assert!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity
+                    >= 1100.
+            );
+        }
+    }
+}
 
 fn main() {
-    let mut goods = HashMap::new();
-    goods.insert(GoodKind::USD, GoodLabel{ good_kind: GoodKind::USD, quantity: 50.0, exchange_rate_buy: 3.0, exchange_rate_sell: 3.0 });
-    goods.insert(GoodKind::EUR, GoodLabel{ good_kind: GoodKind::EUR, quantity: 50.0, exchange_rate_buy: 3.0, exchange_rate_sell: 3.0 });
-    goods.insert(GoodKind::YEN, GoodLabel{ good_kind: GoodKind::YEN, quantity: 50.0, exchange_rate_buy: 3.0, exchange_rate_sell: 3.0 });
-    
-    let mut market = FskMarket{ goods: goods, locked_goods_to_sell: BTreeMap::new(), locked_goods_to_buy: BTreeMap::new() };
-
-    market.borrow_mut().lock_buy(GoodKind::EUR, 10.0, 150.0, "Trader1".to_string());
-    market.borrow_mut().lock_buy(GoodKind::USD, 10.0, 150.0, "Trader1".to_string());
-    let token = market.borrow_mut().lock_buy(GoodKind::EUR, 10.0, 150.0, "Trader1".to_string());
-    market.borrow_mut().lock_buy(GoodKind::EUR, 10.0, 150.0, "Trader1".to_string());
-    market.borrow_mut().lock_buy(GoodKind::YEN, 10.0, 150.0, "Trader1".to_string());
-    //println!("{:?}",market.borrow_mut().lock_buy(GoodKind::EUR, 100.0, 150.0, "Trader1".to_string()));
-    //capire se worka
-    match token {
-        Ok(asd) => {
-            let mut res = market.get_lock_contract_buy_by_token(&"00a".to_string());
-            println!("{:?}", res);
-            match res {
-                Ok(contract) => {market.buy(asd, &mut contract.good);}
-                Err(error) => {println!("{:?}", error);}
-            }
-         //stampa o lock //capire come passare il good
-        }
-        Err(poi) => {println!("{:?}", poi)}, //stampa l'errore
-    
-    }
+    println!("Hello, world!");
 }
