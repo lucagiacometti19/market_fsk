@@ -65,16 +65,35 @@ impl ContractsArchive {
         self.contracts_by_token.remove(token)
     }
 
+    /// This function returns an expired contract each time it's called.
+    /// That contract will be removed from the struct.
+    /// It is the caller responsibility to restore resources contained in the returned contract.
+    /// After all expired contracts have been popped, None is returned.
     fn pop_expired(&mut self, timestamp: u64) -> Option<Rc<LockContract>> {
-        if !self.contracts_by_timestamp.is_empty() {
-            if self.contracts_by_timestamp.get(0).unwrap().expiry_time >= timestamp {
-                //can't fail no need to check option
-                let res = self.contracts_by_timestamp.pop_front().unwrap();
-                self.contracts_by_token.remove(&res.token);
-                self.expired_contracts.insert(res.token.clone());
-                return Some(res);
+
+        //While there are still contracts...
+        while let Some(contract_ref) = self.contracts_by_timestamp.front(){
+            let contract = contract_ref.clone();
+
+            //...and the first contract has expired...
+            if contract.expiry_time >= timestamp{
+
+                //...remove it from the contracts vector, as we don't need it anymore.
+                self.contracts_by_timestamp.pop_front();
+
+                //If the contract is still in the hashmap, it means that it has never been claimed, as buy and sell methods only remove claimed contracts from the hashmap.
+                if self.contracts_by_token.remove(&contract.token).is_some() {
+
+                    //If the contract has expired without being claimed, put it in the expired contracts set and return it.
+                    self.expired_contracts.insert(contract.token.clone());
+                    return Some(contract);
+                }
+
+                //If the contract is not in the hashmap, it means that it had been claimed. Let the 'while' cycle check the next contract in the vector.
             }
         }
+
+        //If we reached this statement, it means that all expired contracts have been cleared.
         None
     }
 }
