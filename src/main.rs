@@ -457,10 +457,10 @@ fn test_on_event() {
     assert_ne!(test_market_1.time, 0)
 }
 
-#[test]
+/* #[test]
 fn test_notify() {
     //dummy market creation - wrong way to create a market!
-    let mut test_market_1 = Rc::new(RefCell::new(FskMarket {
+    let mut test_market_1: Rc<RefCell<dyn Market>> = Rc::new(RefCell::new(FskMarket {
         goods: HashMap::new(),
         subs: Vec::new(),
         time: 0,
@@ -468,7 +468,7 @@ fn test_notify() {
         sell_contracts_archive: ContractsArchive::new(),
     }));
 
-    let mut test_market_2 = Rc::new(RefCell::new(FskMarket {
+    let mut test_market_2: Rc<RefCell<dyn Market>> = Rc::new(RefCell::new(FskMarket {
         goods: HashMap::new(),
         subs: Vec::new(),
         time: 0,
@@ -476,9 +476,10 @@ fn test_notify() {
         sell_contracts_archive: ContractsArchive::new(),
     }));
 
-    /* subscribe_each_other!(test_market_1.clone(), test_market_2.clone());
-    assert_eq!(test_market_1.subs[0], 1); */
-}
+    subscribe_each_other!(test_market_1, test_market_2);
+    test_market_1.borrow_mut()
+    .
+} */
 
 #[test]
 fn test_sell() {
@@ -564,7 +565,8 @@ fn test_sell() {
             .borrow_mut()
             .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
     if let Ok(token) = result_token {
-        for _ in 0..10 {
+        //wait 15 days since that's the max TTL of a lock
+        for _ in 0..15 {
             wait_one_day!(test_market_1);
         }
         let result_sell = test_market_1
@@ -576,6 +578,87 @@ fn test_sell() {
                 SellError::ExpiredToken {
                     expired_token: token.clone()
                 }
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity,
+                1100.
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity,
+                100000. - offer
+            );
+        }
+    }
+
+    //lock_sell & sell err: WrongGoodKind
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(token) = result_token {
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell(token.clone(), &mut Good::new(GoodKind::YEN, 1000.));
+        if let Err(sell_error) = result_sell {
+            assert_eq!(
+                sell_error,
+                SellError::WrongGoodKind {
+                    wrong_good_kind: GoodKind::YEN,
+                    pre_agreed_kind: GoodKind::USD
+                }
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&GoodKind::USD)
+                    .unwrap()
+                    .quantity,
+                1100.
+            );
+            assert_eq!(
+                test_market_1
+                    .borrow_mut()
+                    .goods
+                    .get(&DEFAULT_GOOD_KIND)
+                    .unwrap()
+                    .quantity,
+                100000. - offer
+            );
+        }
+    }
+
+    //lock_sell & sell err: InsufficientGoodQuantity
+    let offer = test_market_1
+        .borrow_mut()
+        .get_sell_price(GoodKind::USD, 1000.)
+        .unwrap();
+    let result_token =
+        test_market_1
+            .borrow_mut()
+            .lock_sell(GoodKind::USD, 1000., offer, "Sergio".to_string());
+    if let Ok(token) = result_token {
+        let result_sell = test_market_1
+            .borrow_mut()
+            .sell(token.clone(), &mut Good::new(GoodKind::YEN, 999.99));
+        if let Err(sell_error) = result_sell {
+            assert_eq!(
+                sell_error,
+                SellError::InsufficientGoodQuantity { contained_quantity: 999.99, pre_agreed_quantity: 1000. }
             );
             assert_eq!(
                 test_market_1
