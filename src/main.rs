@@ -1,8 +1,6 @@
 use chrono::{Utc, Local};
 mod tests;
 
-use rand::Rng;
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
@@ -213,14 +211,18 @@ impl Market for FskMarket {
             },
         );
 
-        Rc::new(RefCell::new(FskMarket {
+        let new_market = Rc::new(RefCell::new(FskMarket{
             goods: goods_result,
             buy_contracts_archive: ContractsArchive::new(),
             sell_contracts_archive: ContractsArchive::new(),
             subs: vec![],
             time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
-        }))
+        }));
+
+        new_market.borrow().write_log_market_init();
+
+        new_market
     }
 
     fn new_file(path: &str) -> Rc<RefCell<dyn Market>>
@@ -586,7 +588,7 @@ impl FskMarket {
 
     fn initialize_log_file(market_name: String) -> RefCell<File> {
         let log_file_name = format!("log_{}.txt", market_name);
-        RefCell::new(OpenOptions::new().append(true).open(log_file_name).unwrap())
+        RefCell::new(OpenOptions::new().create(true).append(true).open(log_file_name).unwrap())
     }
 
     fn write_log_entry(&self, entry: String) {
