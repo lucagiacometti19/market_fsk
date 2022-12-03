@@ -21,6 +21,8 @@ use unitn_market_2022::market::good_label::GoodLabel;
 use unitn_market_2022::{market::*, wait_one_day};
 
 const LOCK_INITIAL_TTL: u64 = 9;
+//higher -> greedier
+const MARKET_GREEDINESS: f32 = 1.01;
 
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
@@ -120,7 +122,9 @@ impl Notifiable for FskMarket {
             EventKind::Bought => {}
             EventKind::LockedSell => {}
             EventKind::Sold => {}
-            EventKind::Wait => (),
+            EventKind::Wait => {
+                //@todo: BLACK FRIDAY!
+            }
         }
 
         //restore locked default currency for expired sell
@@ -145,7 +149,7 @@ impl Market for FskMarket {
     {
         let mut rng = rand::thread_rng();
         //rng.gen_range(0..10))
-        let mut remainder = STARTING_CAPITAL;
+        let mut remainder = STARTING_CAPITAL - 0.1;
 
         let mut temp = rng.gen_range(0..remainder as i32);
 
@@ -181,7 +185,7 @@ impl Market for FskMarket {
                 good_kind: GoodKind::EUR,
                 quantity: eur,
                 exchange_rate_buy: 1.,
-                exchange_rate_sell: 1.,
+                exchange_rate_sell: 1. * MARKET_GREEDINESS,
             },
         );
         goods_result.insert(
@@ -189,8 +193,8 @@ impl Market for FskMarket {
             GoodLabel {
                 good_kind: GoodKind::YEN,
                 quantity: yen,
-                exchange_rate_buy: 1./DEFAULT_EUR_YEN_EXCHANGE_RATE,
-                exchange_rate_sell: 1./DEFAULT_EUR_YEN_EXCHANGE_RATE,
+                exchange_rate_buy: 1. / DEFAULT_EUR_YEN_EXCHANGE_RATE,
+                exchange_rate_sell: 1. / (DEFAULT_EUR_YEN_EXCHANGE_RATE * MARKET_GREEDINESS),
             },
         );
         goods_result.insert(
@@ -198,8 +202,8 @@ impl Market for FskMarket {
             GoodLabel {
                 good_kind: GoodKind::USD,
                 quantity: usd,
-                exchange_rate_buy: 1./DEFAULT_EUR_USD_EXCHANGE_RATE,
-                exchange_rate_sell: 1./DEFAULT_EUR_USD_EXCHANGE_RATE,
+                exchange_rate_buy: 1. / DEFAULT_EUR_USD_EXCHANGE_RATE,
+                exchange_rate_sell: 1. / (DEFAULT_EUR_YEN_EXCHANGE_RATE * MARKET_GREEDINESS),
             },
         );
         goods_result.insert(
@@ -207,8 +211,8 @@ impl Market for FskMarket {
             GoodLabel {
                 good_kind: GoodKind::YUAN,
                 quantity: yuan,
-                exchange_rate_buy: 1./DEFAULT_EUR_YUAN_EXCHANGE_RATE,
-                exchange_rate_sell: 1./DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+                exchange_rate_buy: 1. / DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+                exchange_rate_sell: 1. / (DEFAULT_EUR_YEN_EXCHANGE_RATE * MARKET_GREEDINESS),
             },
         );
 
@@ -253,14 +257,14 @@ impl Market for FskMarket {
 
         //the quantity the trader is asking to buy is lower than the quantity the market owns
         if let Some(good) = self.goods.get(&kind) {
-            //if quantity requested is 1 then just return exchange_rate_buy (?)
-            if quantity == 1. {
-                return Ok(good.exchange_rate_buy);
-            }
-            //else calculate price based on quantity requested by trader
             good_quantity = good.quantity;
             if good.quantity > quantity {
-                todo!("add price calculation and return value");
+                //the market has enough quantity
+                return Ok(FskMarket::get_new_exchange_rate_buy(
+                    good.exchange_rate_buy,
+                    good_quantity,
+                    quantity,
+                ) * quantity);
             }
         }
         //either goodkind was not found in self.goods or its quantity was not enough
@@ -289,7 +293,13 @@ impl Market for FskMarket {
     fn get_goods(&self) -> Vec<GoodLabel> {
         let mut res = Vec::new();
         for (_, good_label) in &self.goods {
-            res.push(good_label.clone());
+            let mut new_good_label = good_label.clone();
+            new_good_label.exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
+                good_label.exchange_rate_buy,
+                good_label.quantity,
+                1.,
+            );
+            res.push(new_good_label);
         }
         res
     }
@@ -303,6 +313,7 @@ impl Market for FskMarket {
     ) -> Result<String, LockBuyError> {
         //1
         if quantity_to_buy < 0. {
+            self.write_log_lock_buy_error(trader_name, kind_to_buy, quantity_to_buy, bid);
             return Err(LockBuyError::NonPositiveQuantityToBuy {
                 negative_quantity_to_buy: quantity_to_buy,
             });
@@ -310,6 +321,7 @@ impl Market for FskMarket {
 
         //2
         if bid < 0. {
+            self.write_log_lock_buy_error(trader_name, kind_to_buy, quantity_to_buy, bid);
             return Err(LockBuyError::NonPositiveBid { negative_bid: bid });
         }
         //get immutable reference so there are no borrow errors
@@ -317,6 +329,7 @@ impl Market for FskMarket {
 
         //5
         if good.quantity < quantity_to_buy {
+            self.write_log_lock_buy_error(trader_name, kind_to_buy, quantity_to_buy, bid);
             return Err(LockBuyError::InsufficientGoodQuantityAvailable {
                 requested_good_kind: kind_to_buy,
                 requested_good_quantity: quantity_to_buy,
@@ -331,6 +344,7 @@ impl Market for FskMarket {
 
         //6
         if bid < get_buy_price_result {
+            self.write_log_lock_buy_error(trader_name, kind_to_buy, quantity_to_buy, bid);
             return Err(LockBuyError::BidTooLow {
                 requested_good_kind: kind_to_buy.clone(),
                 requested_good_quantity: quantity_to_buy,
@@ -341,7 +355,7 @@ impl Market for FskMarket {
 
         //this time we need the mutable reference
         let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
-        //Everything is okay
+                                                                  //Everything is okay
         good.quantity -= quantity_to_buy;
 
         //create the token
@@ -356,6 +370,7 @@ impl Market for FskMarket {
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
 
+            self.write_log_buy_ok(trader_name, kind_to_buy, quantity_to_buy, bid, &token);
         self.notify(Event {
             kind: EventKind::LockedBuy,
             good_kind: kind_to_buy.clone(),
@@ -372,6 +387,7 @@ impl Market for FskMarket {
 
         //1
         if op_contract.is_none() {
+            self.write_log_buy_error(&token);
             if self
                 .buy_contracts_archive
                 .expired_contracts
@@ -388,9 +404,11 @@ impl Market for FskMarket {
         }
 
         let contract = op_contract.unwrap();
+        let contract_price = contract.price;
 
         //2
         if contract.expiry_time <= self.time {
+            self.write_log_buy_error(&token);
             return Err(BuyError::ExpiredToken {
                 expired_token: token,
             });
@@ -398,13 +416,15 @@ impl Market for FskMarket {
 
         //3
         if cash.get_kind() != DEFAULT_GOOD_KIND {
+            self.write_log_buy_error(&token);
             return Err(BuyError::GoodKindNotDefault {
                 non_default_good_kind: cash.get_kind(),
             });
         }
 
         //4
-        if cash.get_qty() < contract.good.get_qty() {
+        if cash.get_qty() < contract.price {
+            self.write_log_buy_error(&token);
             return Err(BuyError::InsufficientGoodQuantity {
                 contained_quantity: cash.get_qty(),
                 pre_agreed_quantity: contract.good.get_qty(),
@@ -421,18 +441,41 @@ impl Market for FskMarket {
 
         let good_to_return = Good::new(contract.good.get_kind(), contract.good.get_qty());
 
-        //update the price of all de goods according to the rules in the Market prices fluctuation section
+        //update the price of all de goods according to the rules in the Market prices fluctuation section -> MAY CAUSE PROBLEMS!!!!!!!!!
+        //new exchange rates of the traded good
+        //TODO->match the unwrap
+        let traded_good_kind = &contract.good.get_kind();
+        //calculate new exchange_rate_buy given the quantity bought
+        let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
+            self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
+            self.goods.get(traded_good_kind).unwrap().quantity,
+            contract.good.get_qty(),
+        );
+        self.goods
+            .get_mut(traded_good_kind)
+            .unwrap()
+            .exchange_rate_buy = new_exchange_rate_buy;
+        //calculate new exchange_rate_sell given the new exchange_rate_buy
+        let new_exchange_rate_sell = FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
+        self.goods
+            .get_mut(traded_good_kind)
+            .unwrap()
+            .exchange_rate_sell = new_exchange_rate_sell;
+
+        //log
+        self.write_log_entry(format!("BUY-TOKEN:{}-OK", token));
+
+        self.buy_contracts_archive.consume_contract(&token);
 
         //notify all the markets of the transaction
         self.notify(Event {
             kind: (EventKind::Bought),
             good_kind: good_to_return.get_kind(),
             quantity: good_to_return.get_qty(),
-            price: contract.price,
+            price: contract_price,
         });
 
         //reset the lock that was in place
-        self.buy_contracts_archive.consume_contract(&token);
         Ok(good_to_return)
     }
 
@@ -568,6 +611,27 @@ impl Market for FskMarket {
             good.split(contract.good.get_qty()).unwrap().get_qty();
         //unwrapping should be safe as errors error conditions were alread checked in gate 4
 
+        //update the price of all de goods according to the rules in the Market prices fluctuation section -> MAY CAUSE PROBLEMS!!!!!!!!!
+        //new exchange rates of the traded good
+        //TODO->match the unwrap
+        let traded_good_kind = &contract.good.get_kind();
+        //calculate new exchange_rate_buy given the quantity bought
+        let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
+            self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
+            self.goods.get(traded_good_kind).unwrap().quantity,
+            contract.good.get_qty(),
+        );
+        self.goods
+            .get_mut(traded_good_kind)
+            .unwrap()
+            .exchange_rate_buy = new_exchange_rate_buy;
+        //calculate new exchange_rate_sell given the new exchange_rate_buy
+        let new_exchange_rate_sell = FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
+        self.goods
+            .get_mut(traded_good_kind)
+            .unwrap()
+            .exchange_rate_sell = new_exchange_rate_sell;
+
         self.write_log_entry(format!("SELL-TOKEN:{}-OK", token));
 
         self.sell_contracts_archive.consume_contract(&token);
@@ -690,6 +754,18 @@ impl FskMarket {
 
     fn write_log_buy_error(&self, token: &String) {
         self.write_log_entry(format!("BUY-TOKEN:{}-ERROR", token));
+    }
+
+    fn get_new_exchange_rate_sell(exchange_rate_buy: f32) -> f32 {
+        exchange_rate_buy / MARKET_GREEDINESS
+    }
+
+    fn get_new_exchange_rate_buy(
+        current_exchange_rate_buy: f32,
+        current_quantity: f32,
+        quantity_to_buy: f32,
+    ) -> f32 {
+        current_exchange_rate_buy * current_quantity / (current_quantity - quantity_to_buy)
     }
 }
 
