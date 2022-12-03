@@ -345,9 +345,9 @@ checksum = "c0edd1e5b14653f783770bce4a4dabb4a5108a5370a5f5d8cfe8710c361f6c8b"
 
 [[package]]
 name = "unitn_market_2022"
-version = "1.0.4"
+version = "1.0.6"
 source = "registry+git://advancedprogramming.disi.unitn.it/index"
-checksum = "51435ff960b717057d6f50656bbec5722087e2641c2a6629f3b0d75d6d9666cf"
+checksum = "84ac7abb90f5a4ed5cc8de3c3ee647a0d4891c213b36cc788032f14217253859"
 
 [[package]]
 name = "wasi"

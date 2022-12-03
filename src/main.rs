@@ -189,8 +189,8 @@ impl Market for FskMarket {
             GoodLabel {
                 good_kind: GoodKind::YEN,
                 quantity: yen,
-                exchange_rate_buy: DEFAULT_EUR_YEN_EXCHANGE_RATE,
-                exchange_rate_sell: DEFAULT_EUR_YEN_EXCHANGE_RATE,
+                exchange_rate_buy: 1./DEFAULT_EUR_YEN_EXCHANGE_RATE,
+                exchange_rate_sell: 1./DEFAULT_EUR_YEN_EXCHANGE_RATE,
             },
         );
         goods_result.insert(
@@ -198,8 +198,8 @@ impl Market for FskMarket {
             GoodLabel {
                 good_kind: GoodKind::USD,
                 quantity: usd,
-                exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE,
-                exchange_rate_sell: DEFAULT_EUR_USD_EXCHANGE_RATE,
+                exchange_rate_buy: 1./DEFAULT_EUR_USD_EXCHANGE_RATE,
+                exchange_rate_sell: 1./DEFAULT_EUR_USD_EXCHANGE_RATE,
             },
         );
         goods_result.insert(
@@ -207,8 +207,8 @@ impl Market for FskMarket {
             GoodLabel {
                 good_kind: GoodKind::YUAN,
                 quantity: yuan,
-                exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE,
-                exchange_rate_sell: DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+                exchange_rate_buy: 1./DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+                exchange_rate_sell: 1./DEFAULT_EUR_YUAN_EXCHANGE_RATE,
             },
         );
 
@@ -242,6 +242,7 @@ impl Market for FskMarket {
         self.goods.get(&DEFAULT_GOOD_KIND).unwrap().quantity
     }
 
+    //definisce la bid minima accettabile dal mercato
     fn get_buy_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
         let mut good_quantity = 0.;
 
@@ -270,13 +271,14 @@ impl Market for FskMarket {
         })
     }
 
+    //definiamo l'offerta massima che il nostro market è disposto a pagare un bene
     fn get_sell_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
         //the quantity is not positive
         if quantity <= 0. {
             return Err(MarketGetterError::NonPositiveQuantityAsked);
         }
 
-        let maximum_price = quantity / self.goods.get(&kind).unwrap().exchange_rate_sell;
+        let maximum_price = quantity * self.goods.get(&kind).unwrap().exchange_rate_sell;
         //how much money the market pay (at max) for the good
 
         let available_default_good = self.get_budget();
