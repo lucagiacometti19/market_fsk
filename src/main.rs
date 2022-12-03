@@ -1,4 +1,5 @@
 use chrono::{Utc, Local};
+use rand::Rng;
 mod tests;
 
 use std::cell::RefCell;
