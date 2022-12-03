@@ -275,15 +275,7 @@ impl Market for FskMarket {
 
         let available_default_good = self.get_budget();
 
-        if available_default_good > maximum_price {
-            return Err(MarketGetterError::InsufficientGoodQuantityAvailable {
-                requested_good_kind: kind,
-                requested_good_quantity: quantity, //TODO: check if this is the right variable to return
-                available_good_quantity: maximum_price,
-            });
-        }
-
-        Ok(maximum_price)
+        Ok(maximum_price.min(available_default_good))
     }
 
     fn get_goods(&self) -> Vec<GoodLabel> {
