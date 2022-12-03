@@ -1,17 +1,20 @@
-use chrono::Utc;
+use chrono::{Local, Utc};
+use rand::Rng;
 mod tests;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::rc::Rc;
-use rand::Rng;
 
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
 use unitn_market_2022::event::notifiable::Notifiable;
-use unitn_market_2022::good::consts::{DEFAULT_EUR_YEN_EXCHANGE_RATE, DEFAULT_EUR_USD_EXCHANGE_RATE, DEFAULT_EUR_YUAN_EXCHANGE_RATE, DEFAULT_GOOD_KIND, STARTING_CAPITAL};
+use unitn_market_2022::good::consts::{
+    DEFAULT_EUR_USD_EXCHANGE_RATE, DEFAULT_EUR_YEN_EXCHANGE_RATE, DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+    DEFAULT_GOOD_KIND, STARTING_CAPITAL,
+};
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
@@ -65,16 +68,32 @@ impl ContractsArchive {
         self.contracts_by_token.remove(token)
     }
 
+    /// This function returns an expired contract each time it's called.
+    /// That contract will be removed from the struct.
+    /// It is the caller responsibility to restore resources contained in the returned contract.
+    /// After all expired contracts have been popped, None is returned.
     fn pop_expired(&mut self, timestamp: u64) -> Option<Rc<LockContract>> {
-        if !self.contracts_by_timestamp.is_empty() {
-            if self.contracts_by_timestamp.get(0).unwrap().expiry_time >= timestamp {
-                //can't fail no need to check option
-                let res = self.contracts_by_timestamp.pop_front().unwrap();
-                self.contracts_by_token.remove(&res.token);
-                self.expired_contracts.insert(res.token.clone());
-                return Some(res);
+        //While there are still contracts...
+        while let Some(contract_ref) = self.contracts_by_timestamp.front() {
+            let contract = contract_ref.clone();
+
+            //...and the first contract has expired...
+            if contract.expiry_time >= timestamp {
+                //...remove it from the contracts vector, as we don't need it anymore.
+                self.contracts_by_timestamp.pop_front();
+
+                //If the contract is still in the hashmap, it means that it has never been claimed, as buy and sell methods only remove claimed contracts from the hashmap.
+                if self.contracts_by_token.remove(&contract.token).is_some() {
+                    //If the contract has expired without being claimed, put it in the expired contracts set and return it.
+                    self.expired_contracts.insert(contract.token.clone());
+                    return Some(contract);
+                }
+
+                //If the contract is not in the hashmap, it means that it had been claimed. Let the 'while' cycle check the next contract in the vector.
             }
         }
+
+        //If we reached this statement, it means that all expired contracts have been cleared.
         None
     }
 }
@@ -120,7 +139,6 @@ impl Notifiable for FskMarket {
 }
 
 impl Market for FskMarket {
-
     fn new_random() -> Rc<RefCell<dyn Market>>
     where
         Self: Sized,
@@ -147,34 +165,66 @@ impl Market for FskMarket {
         let EUR_QTY = remainder;
 
         FskMarket::new_with_quantities(EUR_QTY, YEN_QTY, USD_QTY, YUAN_QTY)
-
-
     }
 
     // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
 
-    
     fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>>
     where
         Self: Sized,
     {
         let mut goods_result = HashMap::new();
 
-        goods_result.insert(GoodKind::EUR, GoodLabel{ good_kind: GoodKind::EUR,  quantity: eur,  exchange_rate_buy: 1., exchange_rate_sell: 1.});
-        goods_result.insert(GoodKind::YEN, GoodLabel{ good_kind: GoodKind::YEN,  quantity: yen,  exchange_rate_buy: DEFAULT_EUR_YEN_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_YEN_EXCHANGE_RATE });
-        goods_result.insert(GoodKind::USD, GoodLabel{ good_kind: GoodKind::USD,  quantity: usd,  exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE, exchange_rate_sell:  1.0/DEFAULT_EUR_USD_EXCHANGE_RATE });
-        goods_result.insert(GoodKind::YUAN,GoodLabel{ good_kind: GoodKind::YUAN, quantity: yuan, exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE, exchange_rate_sell: 1.0/DEFAULT_EUR_YUAN_EXCHANGE_RATE});
+        goods_result.insert(
+            GoodKind::EUR,
+            GoodLabel {
+                good_kind: GoodKind::EUR,
+                quantity: eur,
+                exchange_rate_buy: 1.,
+                exchange_rate_sell: 1.,
+            },
+        );
+        goods_result.insert(
+            GoodKind::YEN,
+            GoodLabel {
+                good_kind: GoodKind::YEN,
+                quantity: yen,
+                exchange_rate_buy: DEFAULT_EUR_YEN_EXCHANGE_RATE,
+                exchange_rate_sell: DEFAULT_EUR_YEN_EXCHANGE_RATE,
+            },
+        );
+        goods_result.insert(
+            GoodKind::USD,
+            GoodLabel {
+                good_kind: GoodKind::USD,
+                quantity: usd,
+                exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE,
+                exchange_rate_sell: DEFAULT_EUR_USD_EXCHANGE_RATE,
+            },
+        );
+        goods_result.insert(
+            GoodKind::YUAN,
+            GoodLabel {
+                good_kind: GoodKind::YUAN,
+                quantity: yuan,
+                exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+                exchange_rate_sell: DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+            },
+        );
 
-        Rc::new(RefCell::new(FskMarket{
+        let new_market = Rc::new(RefCell::new(FskMarket {
             goods: goods_result,
             buy_contracts_archive: ContractsArchive::new(),
             sell_contracts_archive: ContractsArchive::new(),
             subs: vec![],
             time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
-        }))
-    }
+        }));
 
+        new_market.borrow().write_log_market_init();
+
+        new_market
+    }
 
     fn new_file(path: &str) -> Rc<RefCell<dyn Market>>
     where
@@ -199,8 +249,14 @@ impl Market for FskMarket {
         if quantity < 0. {
             return Err(MarketGetterError::NonPositiveQuantityAsked);
         }
-        //the quantity the trader is asking to buy is higher than the quantity the market owns
+
+        //the quantity the trader is asking to buy is lower than the quantity the market owns
         if let Some(good) = self.goods.get(&kind) {
+            //if quantity requested is 1 then just return exchange_rate_buy (?)
+            if quantity == 1. {
+                return Ok(good.exchange_rate_buy);
+            }
+            //else calculate price based on quantity requested by trader
             good_quantity = good.quantity;
             if good.quantity > quantity {
                 todo!("add price calculation and return value");
@@ -225,15 +281,7 @@ impl Market for FskMarket {
 
         let available_default_good = self.get_budget();
 
-        if available_default_good > maximum_price {
-            return Err(MarketGetterError::InsufficientGoodQuantityAvailable {
-                requested_good_kind: kind,
-                requested_good_quantity: quantity, //TODO: check if this is the right variable to return
-                available_good_quantity: maximum_price,
-            });
-        }
-
-        Ok(maximum_price)
+        Ok(maximum_price.min(available_default_good))
     }
 
     fn get_goods(&self) -> Vec<GoodLabel> {
@@ -251,35 +299,46 @@ impl Market for FskMarket {
         bid: f32,
         trader_name: String,
     ) -> Result<String, LockBuyError> {
-
         //1
         if quantity_to_buy < 0. {
-            return Err(LockBuyError::NonPositiveQuantityToBuy { negative_quantity_to_buy: quantity_to_buy, })
+            return Err(LockBuyError::NonPositiveQuantityToBuy {
+                negative_quantity_to_buy: quantity_to_buy,
+            });
         }
-        
+
         //2
         if bid < 0. {
-            return Err(LockBuyError::NonPositiveBid { negative_bid: bid })
+            return Err(LockBuyError::NonPositiveBid { negative_bid: bid });
         }
-
-        let get_buy_price_result = self.get_buy_price(kind_to_buy.clone(), quantity_to_buy).unwrap();
-        
-        let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
+        //get immutable reference so there are no borrow errors
+        let mut good = self.goods.get(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
 
         //5
-        if good.quantity < quantity_to_buy{
+        if good.quantity < quantity_to_buy {
             return Err(LockBuyError::InsufficientGoodQuantityAvailable {
                 requested_good_kind: kind_to_buy,
                 requested_good_quantity: quantity_to_buy,
                 available_good_quantity: good.quantity,
-            })
+            });
         }
+
+        //unwrap won't panic
+        let get_buy_price_result = self
+            .get_buy_price(kind_to_buy.clone(), quantity_to_buy)
+            .unwrap();
 
         //6
-        if bid < get_buy_price_result{
-            return Err(LockBuyError::BidTooLow { requested_good_kind: kind_to_buy.clone(), requested_good_quantity: quantity_to_buy, low_bid: bid, lowest_acceptable_bid: get_buy_price_result });
+        if bid < get_buy_price_result {
+            return Err(LockBuyError::BidTooLow {
+                requested_good_kind: kind_to_buy.clone(),
+                requested_good_quantity: quantity_to_buy,
+                low_bid: bid,
+                lowest_acceptable_bid: get_buy_price_result,
+            });
         }
 
+        //this time we need the mutable reference
+        let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
         //Everything is okay
         good.quantity -= quantity_to_buy;
 
@@ -295,7 +354,6 @@ impl Market for FskMarket {
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
 
-        
         self.notify(Event {
             kind: EventKind::LockedBuy,
             good_kind: kind_to_buy.clone(),
@@ -307,10 +365,9 @@ impl Market for FskMarket {
     }
 
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
-        
         //check if the token is valid or expired or unrecognized
         let op_contract = self.buy_contracts_archive.contracts_by_token.get(&token);
-        
+
         //1
         if op_contract.is_none() {
             if self
@@ -338,8 +395,10 @@ impl Market for FskMarket {
         }
 
         //3
-        if cash.get_kind() != DEFAULT_GOOD_KIND{
-            return Err(BuyError::GoodKindNotDefault { non_default_good_kind: cash.get_kind() });
+        if cash.get_kind() != DEFAULT_GOOD_KIND {
+            return Err(BuyError::GoodKindNotDefault {
+                non_default_good_kind: cash.get_kind(),
+            });
         }
 
         //4
@@ -357,14 +416,19 @@ impl Market for FskMarket {
 
         //put the pre-agreed quantity in the market
         self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += contract.good.get_qty();
-        
+
         let good_to_return = Good::new(contract.good.get_kind(), contract.good.get_qty());
-        
+
         //update the price of all de goods according to the rules in the Market prices fluctuation section
 
         //notify all the markets of the transaction
-        self.notify(Event { kind: (EventKind::Bought), good_kind: good_to_return.get_kind(), quantity: good_to_return.get_qty(), price: contract.price });
-        
+        self.notify(Event {
+            kind: (EventKind::Bought),
+            good_kind: good_to_return.get_kind(),
+            quantity: good_to_return.get_qty(),
+            price: contract.price,
+        });
+
         //reset the lock that was in place
         self.buy_contracts_archive.consume_contract(&token);
         Ok(good_to_return)
@@ -448,7 +512,7 @@ impl Market for FskMarket {
         //1
         if op_contract.is_none() {
             self.write_log_sell_error(&token);
-            
+
             if self
                 .sell_contracts_archive
                 .expired_contracts
@@ -526,17 +590,42 @@ impl FskMarket {
 
     fn initialize_log_file(market_name: String) -> RefCell<File> {
         let log_file_name = format!("log_{}.txt", market_name);
-        RefCell::new(File::create(log_file_name).unwrap())
+        RefCell::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_name)
+                .unwrap(),
+        )
     }
 
     fn write_log_entry(&self, entry: String) {
-        self.log_output.borrow_mut().write(format!(
-            "{}|{}|{}\n",
-            self.get_name(),
-            Utc::now().format("%y:%m:%d:%H:%M:%S:%4f"),
-            entry
-        ).as_bytes());
+        if self
+            .log_output
+            .borrow_mut()
+            .write(
+                format!(
+                    "{}|{}|{}\n",
+                    self.get_name(),
+                    Local::now().format("%y:%m:%d:%H:%M:%S:%3f"),
+                    entry
+                )
+                .as_bytes(),
+            )
+            .is_err()
+        {
+            println!("{}: Couldn't write to log file", self.get_name())
+        }
         //YY:MM:DD:HH:MM:SEC:MSES
+    }
+
+    fn write_log_market_init(&self) {
+        self.write_log_entry(format!("\nMARKET_INITIALIZATION\nEUR: {:+e}\nUSD: {:+e}\nYEN: {:+e}\nYUAN: {:+e}\nEND_MARKET_INITIALIZATION",
+            self.goods.get(&GoodKind::EUR).unwrap().quantity,
+            self.goods.get(&GoodKind::USD).unwrap().quantity,
+            self.goods.get(&GoodKind::YEN).unwrap().quantity,
+            self.goods.get(&GoodKind::YUAN).unwrap().quantity
+        ));
     }
 
     fn write_log_buy_ok(
@@ -602,6 +691,4 @@ impl FskMarket {
     }
 }
 
-fn main() {
-    
-}
+fn main() {}

@@ -18,16 +18,9 @@ mod test {
         market_test::test_new_random::<MarketType>();
         market_test::test_get_buy_price_insufficient_qty_error::<MarketType>();
         market_test::test_get_buy_price_non_positive_error::<MarketType>();
-        market_test::test_get_buy_price_success::<MarketType>();
-        //market_test::test_get_sell_price_insufficient_qty_error::<MarketType>();
+        //market_test::test_get_buy_price_success::<MarketType>();
         market_test::test_get_sell_price_non_positive_error::<MarketType>();
         market_test::test_get_sell_price_success::<MarketType>();
-        //@todo!(market deadlock prevention)
         //market_test::test_deadlock_prevention::<MarketType>();
-        //test_sell_success::<MarketType>();
-        //test_sell_err_unrecognized_token::<MarketType>();
-        //test_sell_err_expired_token::<MarketType>();
-        //test_sell_err_wrong_good_kind::<MarketType>();
-        //test_sell_err_insufficient_good_quantity::<MarketType>();
     }
 }
