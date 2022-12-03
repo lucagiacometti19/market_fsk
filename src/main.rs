@@ -1,4 +1,4 @@
-use chrono::{Utc, Local};
+use chrono::{Local, Utc};
 use rand::Rng;
 mod tests;
 
@@ -190,7 +190,7 @@ impl Market for FskMarket {
                 good_kind: GoodKind::YEN,
                 quantity: yen,
                 exchange_rate_buy: DEFAULT_EUR_YEN_EXCHANGE_RATE,
-                exchange_rate_sell: 1.0 / DEFAULT_EUR_YEN_EXCHANGE_RATE,
+                exchange_rate_sell: DEFAULT_EUR_YEN_EXCHANGE_RATE,
             },
         );
         goods_result.insert(
@@ -199,7 +199,7 @@ impl Market for FskMarket {
                 good_kind: GoodKind::USD,
                 quantity: usd,
                 exchange_rate_buy: DEFAULT_EUR_USD_EXCHANGE_RATE,
-                exchange_rate_sell: 1.0 / DEFAULT_EUR_USD_EXCHANGE_RATE,
+                exchange_rate_sell: DEFAULT_EUR_USD_EXCHANGE_RATE,
             },
         );
         goods_result.insert(
@@ -208,11 +208,11 @@ impl Market for FskMarket {
                 good_kind: GoodKind::YUAN,
                 quantity: yuan,
                 exchange_rate_buy: DEFAULT_EUR_YUAN_EXCHANGE_RATE,
-                exchange_rate_sell: 1.0 / DEFAULT_EUR_YUAN_EXCHANGE_RATE,
+                exchange_rate_sell: DEFAULT_EUR_YUAN_EXCHANGE_RATE,
             },
         );
 
-        let new_market = Rc::new(RefCell::new(FskMarket{
+        let new_market = Rc::new(RefCell::new(FskMarket {
             goods: goods_result,
             buy_contracts_archive: ContractsArchive::new(),
             sell_contracts_archive: ContractsArchive::new(),
@@ -249,8 +249,14 @@ impl Market for FskMarket {
         if quantity < 0. {
             return Err(MarketGetterError::NonPositiveQuantityAsked);
         }
-        //the quantity the trader is asking to buy is higher than the quantity the market owns
+
+        //the quantity the trader is asking to buy is lower than the quantity the market owns
         if let Some(good) = self.goods.get(&kind) {
+            //if quantity requested is 1 then just return exchange_rate_buy (?)
+            if quantity == 1. {
+                return Ok(good.exchange_rate_buy);
+            }
+            //else calculate price based on quantity requested by trader
             good_quantity = good.quantity;
             if good.quantity > quantity {
                 todo!("add price calculation and return value");
@@ -304,12 +310,8 @@ impl Market for FskMarket {
         if bid < 0. {
             return Err(LockBuyError::NonPositiveBid { negative_bid: bid });
         }
-
-        let get_buy_price_result = self
-            .get_buy_price(kind_to_buy.clone(), quantity_to_buy)
-            .unwrap();
-
-        let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
+        //get immutable reference so there are no borrow errors
+        let mut good = self.goods.get(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
 
         //5
         if good.quantity < quantity_to_buy {
@@ -319,6 +321,11 @@ impl Market for FskMarket {
                 available_good_quantity: good.quantity,
             });
         }
+
+        //unwrap won't panic
+        let get_buy_price_result = self
+            .get_buy_price(kind_to_buy.clone(), quantity_to_buy)
+            .unwrap();
 
         //6
         if bid < get_buy_price_result {
@@ -330,6 +337,8 @@ impl Market for FskMarket {
             });
         }
 
+        //this time we need the mutable reference
+        let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
         //Everything is okay
         good.quantity -= quantity_to_buy;
 
@@ -581,7 +590,13 @@ impl FskMarket {
 
     fn initialize_log_file(market_name: String) -> RefCell<File> {
         let log_file_name = format!("log_{}.txt", market_name);
-        RefCell::new(OpenOptions::new().create(true).append(true).open(log_file_name).unwrap())
+        RefCell::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_name)
+                .unwrap(),
+        )
     }
 
     fn write_log_entry(&self, entry: String) {
