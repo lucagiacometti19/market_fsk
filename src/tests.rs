@@ -37,7 +37,7 @@ mod test {
         market_test::test_sell_success::<MarketType>();
         //buy tests
         market_test::test_buy_good_kind_not_default::<MarketType>();
-        //market_test::test_buy_insufficient_good_quantity::<MarketType>();
+        market_test::test_buy_insufficient_good_quantity::<MarketType>();
         market_test::test_buy_unrecognized_token::<MarketType>();
         market_test::test_buy_success::<MarketType>();
         //test price_change

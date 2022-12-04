@@ -464,21 +464,21 @@ impl Market for FskMarket {
         }
 
         //4
-        if cash.get_qty() < contract.price {
+        if cash.get_qty() < contract_price {
             self.write_log_buy_error(&token);
             return Err(BuyError::InsufficientGoodQuantity {
                 contained_quantity: cash.get_qty(),
-                pre_agreed_quantity: contract.good.get_qty(),
+                pre_agreed_quantity: contract_price
             });
         }
 
         //everything checks out, the buy can proceed
 
         //removing the pre-agreed quantity from cash
-        cash.split(contract.good.get_qty());
+        cash.split(contract_price);
 
         //put the pre-agreed quantity in the market
-        self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += contract.good.get_qty();
+        self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += contract_price;
 
         let good_to_return = Good::new(contract.good.get_kind(), contract.good.get_qty());
 
