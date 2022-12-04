@@ -6,7 +6,11 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
+use std::num::ParseFloatError;
 use std::rc::Rc;
+
+use std::path::Path;
+use std::io::{Write, Read};
 
 use random_string::generate;
 use unitn_market_2022::event::event::{Event, EventKind};
@@ -234,8 +238,37 @@ impl Market for FskMarket {
     where
         Self: Sized,
     {
-        todo!()
+       
+        let file_pat = "data.txt";
+        let exists = Path::new(file_pat).exists();
+         if !exists {
+            println!("file not found");
+            return FskMarket::new_random();
+        }
+
+            let mut file = File::open(file_pat).expect("Impossibile leggere il file");
+            let mut content = String::new();
+            file.read_to_string(&mut content).unwrap();
+            println!("{}", content);
+            let mut values = HashMap::new();
+            content.split("\n").for_each(|x|{println!("{:?}",x);
+                let currency = x.split("=").nth(0).unwrap();
+                let value= x.split("=").nth(1).unwrap();
+                values.insert(currency,value);
+            });
+            println!("{:?}", values);
+
+            let try_parse = || -> Result< Rc<RefCell<dyn Market>>, ParseFloatError> {
+                let EUR_QTY:f32 = values.get(&"EUR").unwrap_or(&"error").parse::<f32>()?;
+                let YEN_QTY:f32 = values.get(&"YEN").unwrap_or(&"error").parse::<f32>()?;
+                let YUAN_QTY :f32 = values.get(&"YUAN").unwrap_or(&"error").parse::<f32>()?;
+                let USD_QTY: f32 = values.get(&"USD").unwrap_or(&"error").parse::<f32>()?;
+                Ok(FskMarket::new_with_quantities(EUR_QTY, YEN_QTY, USD_QTY, YUAN_QTY))
+            };
+            try_parse().unwrap_or({println!("erore.");FskMarket::new_random()})
     }
+
+   
 
     fn get_name(&self) -> &'static str {
         "FSK"
@@ -769,4 +802,6 @@ impl FskMarket {
     }
 }
 
-fn main() {}
+fn main() {
+    FskMarket::new_file("data.txt");
+}
