@@ -24,6 +24,10 @@ const LOCK_INITIAL_TTL: u64 = 9;
 //higher -> greedier
 const MARKET_GREEDINESS: f32 = 1.01;
 
+const BLACK_FRIDAY_DISCOUNT: f32 = 0.6;
+
+const EXCHANGE_DECREASE_RATE: f32 = -0.01;
+
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
     //the key is the token given as ret value of a buy/sell lock fn
@@ -122,8 +126,34 @@ impl Notifiable for FskMarket {
             EventKind::Bought => {}
             EventKind::LockedSell => {}
             EventKind::Sold => {}
-            EventKind::Wait => {
-                //@todo: BLACK FRIDAY!
+            EventKind::Wait => {}
+        }
+
+        //black_friday_handling
+
+        //black friday begins
+        if self.time % 7 == 4 {
+            for (good_kind, good_label) in & mut self.goods{
+                match *good_kind{
+                    DEFAULT_GOOD_KIND=>{},
+                    _=>{
+                        good_label.exchange_rate_buy *= BLACK_FRIDAY_DISCOUNT;
+                        good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                    }
+                }
+            }
+        }
+        
+        //black friday ends
+        if self.time % 7 == 5 {
+            for (good_kind, good_label) in & mut self.goods{
+                match *good_kind{
+                    DEFAULT_GOOD_KIND=>{},
+                    _=>{
+                        good_label.exchange_rate_buy /= BLACK_FRIDAY_DISCOUNT;
+                        good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                    }
+                }
             }
         }
 
