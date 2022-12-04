@@ -24,7 +24,7 @@ const LOCK_INITIAL_TTL: u64 = 9;
 //higher -> greedier
 const MARKET_GREEDINESS: f32 = 1.01;
 
-const BLACK_FRIDAY_DISCOUNT: f32 = 0.60;
+const BLACK_FRIDAY_DISCOUNT: f32 = 0.40; //discount the goods of 40%
 
 const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.99;
 
@@ -137,7 +137,7 @@ impl Notifiable for FskMarket {
                 match *good_kind{
                     DEFAULT_GOOD_KIND=>{},
                     _=>{
-                        good_label.exchange_rate_buy *= BLACK_FRIDAY_DISCOUNT;
+                        good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
                         good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
                     }
                 }
@@ -150,7 +150,7 @@ impl Notifiable for FskMarket {
                 match *good_kind{
                     DEFAULT_GOOD_KIND=>{},
                     _=>{
-                        good_label.exchange_rate_buy /= BLACK_FRIDAY_DISCOUNT;
+                        good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
                         good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
                     }
                 }
