@@ -24,9 +24,9 @@ const LOCK_INITIAL_TTL: u64 = 9;
 //higher -> greedier
 const MARKET_GREEDINESS: f32 = 1.01;
 
-const BLACK_FRIDAY_DISCOUNT: f32 = 0.6;
+const BLACK_FRIDAY_DISCOUNT: f32 = 0.60;
 
-const EXCHANGE_DECREASE_RATE: f32 = -0.01;
+const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.99;
 
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
@@ -153,6 +153,17 @@ impl Notifiable for FskMarket {
                         good_label.exchange_rate_buy /= BLACK_FRIDAY_DISCOUNT;
                         good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
                     }
+                }
+            }
+        }
+
+        //decrease exchange rate over time
+        for (good_kind, good_label) in & mut self.goods{
+            match *good_kind{
+                DEFAULT_GOOD_KIND=>{},
+                _=>{
+                    good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
+                    good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
                 }
             }
         }
