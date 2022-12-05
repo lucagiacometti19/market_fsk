@@ -38,7 +38,6 @@ struct FskMarket {
     log_output: RefCell<File>,
     subs: Vec<Box<dyn Notifiable>>,
     time: u64,
-    is_blackfriday_active: bool,
 }
 
 struct ContractsArchive {
@@ -131,7 +130,6 @@ impl Notifiable for FskMarket {
 
         //black_friday_handling
         //check if black friday is already running
-        if !self.is_blackfriday_active {
             //black friday begins
             //if self.time % 7 == 4 {
                 for (good_kind, good_label) in &mut self.goods {
@@ -145,7 +143,6 @@ impl Notifiable for FskMarket {
                     }
                 }
             //}
-        } else {
             //black friday ends
             if self.time % 7 == 5 {
                 for (good_kind, good_label) in &mut self.goods {
@@ -158,7 +155,6 @@ impl Notifiable for FskMarket {
                         }
                     }
                 }
-            }
         }
 
         //decrease exchange rate over time
@@ -273,7 +269,6 @@ impl Market for FskMarket {
             subs: vec![],
             time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
-            is_blackfriday_active: false,
         }));
 
         new_market.borrow().write_log_market_init();
