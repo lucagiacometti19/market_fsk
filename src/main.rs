@@ -87,7 +87,7 @@ impl ContractsArchive {
             let contract = contract_ref.clone();
 
             //...and the first contract has expired...
-            if contract.expiry_time >= timestamp {
+            if contract.expiry_time <= timestamp {
                 //...remove it from the contracts vector, as we don't need it anymore.
                 self.contracts_by_timestamp.pop_front();
                 //If the contract is still in the hashmap, it means that it has never been claimed, as buy and sell methods only remove claimed contracts from the hashmap.
@@ -97,7 +97,7 @@ impl ContractsArchive {
                     return Some(contract);
                 }
                 //If the contract is not in the hashmap, it means that it had been claimed. Let the 'while' cycle check the next contract in the vector.
-            }
+            } else { break; }
         }
         //If we reached this statement, it means that all expired contracts have been cleared.
         None
@@ -133,7 +133,7 @@ impl Notifiable for FskMarket {
         //check if black friday is already running
         if !self.is_blackfriday_active {
             //black friday begins
-            if self.time % 7 == 4 {
+            //if self.time % 7 == 4 {
                 for (good_kind, good_label) in &mut self.goods {
                     match *good_kind {
                         DEFAULT_GOOD_KIND => {}
@@ -144,7 +144,7 @@ impl Notifiable for FskMarket {
                         }
                     }
                 }
-            }
+            //}
         } else {
             //black friday ends
             if self.time % 7 == 5 {
@@ -160,7 +160,7 @@ impl Notifiable for FskMarket {
                 }
             }
         }
-        
+
         //decrease exchange rate over time
         for (good_kind, good_label) in &mut self.goods {
             match *good_kind {
@@ -733,6 +733,7 @@ impl Market for FskMarket {
 
 impl FskMarket {
     fn notify(&mut self, event: Event) {
+        self.on_event(event.clone());
         for sub in &mut self.subs {
             sub.on_event(event.clone());
         }
