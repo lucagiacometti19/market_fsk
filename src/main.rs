@@ -96,7 +96,9 @@ impl ContractsArchive {
                     return Some(contract);
                 }
                 //If the contract is not in the hashmap, it means that it had been claimed. Let the 'while' cycle check the next contract in the vector.
-            } else { break; }
+            } else {
+                break;
+            }
         }
         //If we reached this statement, it means that all expired contracts have been cleared.
         None
@@ -125,13 +127,23 @@ impl Notifiable for FskMarket {
             EventKind::Bought => {}
             EventKind::LockedSell => {}
             EventKind::Sold => {}
-            EventKind::Wait => {}
-        }
+            EventKind::Wait => {
+                //decrease exchange rate over time
+                for (good_kind, good_label) in &mut self.goods {
+                    match *good_kind {
+                        DEFAULT_GOOD_KIND => {}
+                        _ => {
+                            good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
+                            good_label.exchange_rate_sell =
+                                FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                        }
+                    }
+                }
 
-        //black_friday_handling
-        //check if black friday is already running
-            //black friday begins
-            //if self.time % 7 == 4 {
+                //black_friday_handling
+                //check if black friday is already running
+                //black friday begins
+                //if self.time % 7 == 4 {
                 for (good_kind, good_label) in &mut self.goods {
                     match *good_kind {
                         DEFAULT_GOOD_KIND => {}
@@ -142,29 +154,21 @@ impl Notifiable for FskMarket {
                         }
                     }
                 }
-            //}
-            //black friday ends
-            if self.time % 7 == 5 {
-                for (good_kind, good_label) in &mut self.goods {
-                    match *good_kind {
-                        DEFAULT_GOOD_KIND => {}
-                        _ => {
-                            good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
-                            good_label.exchange_rate_sell =
-                                FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                //}
+                //black friday ends
+                if self.time % 7 == 5 {
+                    for (good_kind, good_label) in &mut self.goods {
+                        match *good_kind {
+                            DEFAULT_GOOD_KIND => {}
+                            _ => {
+                                good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
+                                good_label.exchange_rate_sell =
+                                    FskMarket::get_new_exchange_rate_sell(
+                                        good_label.exchange_rate_buy,
+                                    )
+                            }
                         }
                     }
-                }
-        }
-
-        //decrease exchange rate over time
-        for (good_kind, good_label) in &mut self.goods {
-            match *good_kind {
-                DEFAULT_GOOD_KIND => {}
-                _ => {
-                    good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
-                    good_label.exchange_rate_sell =
-                        FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
                 }
             }
         }
@@ -231,7 +235,7 @@ impl Market for FskMarket {
                 good_kind: GoodKind::EUR,
                 quantity: eur,
                 exchange_rate_buy: 1.,
-                exchange_rate_sell: 1. * MARKET_GREEDINESS,
+                exchange_rate_sell: 1. / MARKET_GREEDINESS,
             },
         );
         goods_result.insert(
@@ -687,30 +691,34 @@ impl Market for FskMarket {
         //this is the default currency that is going to be returned to the seller (the trader)
         let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell(...)
 
-        self.goods.get_mut(&good.get_kind()).unwrap().quantity +=
-            good.split(contract.good.get_qty()).unwrap().get_qty();
+        /* self.goods.get_mut(&good.get_kind()).unwrap().quantity +=
+        good.split(contract.good.get_qty()).unwrap().get_qty(); */
+        self.goods.get_mut(&good.get_kind()).unwrap().quantity += contract.good.get_qty();
+        good.split(contract.good.get_qty());
         //unwrapping should be safe as errors error conditions were alread checked in gate 4
 
         //update the price of all de goods according to the rules in the Market prices fluctuation section
         //new exchange rates of the traded good
         let traded_good_kind = &contract.good.get_kind();
-        //calculate new exchange_rate_buy given the quantity bought
-        let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
-            self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
-            self.goods.get(traded_good_kind).unwrap().quantity,
-            -contract.good.get_qty(),
-        );
-        self.goods
-            .get_mut(traded_good_kind)
-            .unwrap()
-            .exchange_rate_buy = new_exchange_rate_buy;
-        //calculate new exchange_rate_sell given the new exchange_rate_buy
-        let new_exchange_rate_sell = FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
-        self.goods
-            .get_mut(traded_good_kind)
-            .unwrap()
-            .exchange_rate_sell = new_exchange_rate_sell;
-
+        if *traded_good_kind != GoodKind::EUR {
+            //calculate new exchange_rate_buy given the quantity bought
+            let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
+                self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
+                self.goods.get(traded_good_kind).unwrap().quantity,
+                -contract.good.get_qty(),
+            );
+            self.goods
+                .get_mut(traded_good_kind)
+                .unwrap()
+                .exchange_rate_buy = new_exchange_rate_buy;
+            //calculate new exchange_rate_sell given the new exchange_rate_buy
+            let new_exchange_rate_sell =
+                FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
+            self.goods
+                .get_mut(traded_good_kind)
+                .unwrap()
+                .exchange_rate_sell = new_exchange_rate_sell;
+        }
         self.write_log_entry(format!("SELL-TOKEN:{}-OK", token));
 
         self.sell_contracts_archive.consume_contract(&token);
