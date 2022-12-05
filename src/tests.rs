@@ -4,12 +4,12 @@ mod test {
     use unitn_market_2022::market::market_test;
     //import here your implementation of the market
     use super::super::FskMarket;
-    //make an alias to your market
+    //make an alias to your market 37 TEST
     type MarketType = FskMarket;
     //test every aspect of your market using the generic function
     #[test]
     fn tests() {
-        //market_test::test_get_name::<MarketType>();
+        market_test::test_get_name::<MarketType>();
         //test new_random
         market_test::test_new_random::<MarketType>();
         market_test::new_random_should_not_exceeed_starting_capital::<MarketType>();
@@ -46,7 +46,7 @@ mod test {
         market_test::test_get_buy_price_non_positive_error::<MarketType>();
         market_test::test_get_buy_price_success::<MarketType>();
         //test get goods
-        //market_test::test_get_goods::<MarketType>();
+        //market_test::test_get_goods::<MarketType>(); echange rate of euro is not always 1!
         //test lock buy
         market_test::test_lock_buy_bid_too_low::<MarketType>();
         market_test::test_lock_buy_insufficient_good_quantity_available::<MarketType>();
