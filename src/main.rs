@@ -121,6 +121,7 @@ impl Notifiable for FskMarket {
         // here we apply logic of changing good quantities, as described in https://github.com/orgs/WG-AdvancedProgramming/discussions/38#discussioncomment-4167913
         //every event triggers a new tick
         self.time += 1;
+        //println!("Exchange rate buy EUR: {}\nExchange rate sell EUR: {}",self.goods.get(&GoodKind::EUR).unwrap().exchange_rate_buy, self.goods.get(&GoodKind::EUR).unwrap().exchange_rate_buy);
         match event.kind {
             EventKind::LockedBuy => {}
             EventKind::Bought => {}
@@ -133,37 +134,40 @@ impl Notifiable for FskMarket {
 
         //black friday begins
         if self.time % 7 == 4 {
-            for (good_kind, good_label) in & mut self.goods{
-                match *good_kind{
-                    DEFAULT_GOOD_KIND=>{},
-                    _=>{
+            for (good_kind, good_label) in &mut self.goods {
+                match *good_kind {
+                    DEFAULT_GOOD_KIND => {}
+                    _ => {
                         good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
-                        good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                        good_label.exchange_rate_sell =
+                            good_label.exchange_rate_buy * MARKET_GREEDINESS;
                     }
                 }
             }
         }
-        
+
         //black friday ends
         if self.time % 7 == 5 {
-            for (good_kind, good_label) in & mut self.goods{
-                match *good_kind{
-                    DEFAULT_GOOD_KIND=>{},
-                    _=>{
+            for (good_kind, good_label) in &mut self.goods {
+                match *good_kind {
+                    DEFAULT_GOOD_KIND => {}
+                    _ => {
                         good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
-                        good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                        good_label.exchange_rate_sell =
+                            good_label.exchange_rate_buy * MARKET_GREEDINESS;
                     }
                 }
             }
         }
 
         //decrease exchange rate over time
-        for (good_kind, good_label) in & mut self.goods{
-            match *good_kind{
-                DEFAULT_GOOD_KIND=>{},
-                _=>{
+        for (good_kind, good_label) in &mut self.goods {
+            match *good_kind {
+                DEFAULT_GOOD_KIND => {}
+                _ => {
                     good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
-                    good_label.exchange_rate_sell = good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                    good_label.exchange_rate_sell =
+                        good_label.exchange_rate_buy * MARKET_GREEDINESS;
                 }
             }
         }
@@ -333,13 +337,15 @@ impl Market for FskMarket {
 
     fn get_goods(&self) -> Vec<GoodLabel> {
         let mut res = Vec::new();
-        for (_, good_label) in &self.goods {
+        for (gk, good_label) in &self.goods {
             let mut new_good_label = good_label.clone();
-            new_good_label.exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
-                good_label.exchange_rate_buy,
-                good_label.quantity,
-                1.,
-            );
+            if *gk != DEFAULT_GOOD_KIND {
+                new_good_label.exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
+                    good_label.exchange_rate_buy,
+                    good_label.quantity,
+                    1.,
+                );
+            }
             res.push(new_good_label);
         }
         res
@@ -411,7 +417,7 @@ impl Market for FskMarket {
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
 
-            self.write_log_buy_ok(trader_name, kind_to_buy, quantity_to_buy, bid, &token);
+        self.write_log_buy_ok(trader_name, kind_to_buy, quantity_to_buy, bid, &token);
         self.notify(Event {
             kind: EventKind::LockedBuy,
             good_kind: kind_to_buy.clone(),
@@ -468,7 +474,7 @@ impl Market for FskMarket {
             self.write_log_buy_error(&token);
             return Err(BuyError::InsufficientGoodQuantity {
                 contained_quantity: cash.get_qty(),
-                pre_agreed_quantity: contract_price
+                pre_agreed_quantity: contract_price,
             });
         }
 
