@@ -146,6 +146,12 @@ impl Notifiable for FskMarket {
     }
 }
 
+impl Drop for FskMarket {
+    fn drop(&mut self) {
+        
+    }
+}
+
 impl Market for FskMarket {
     fn new_random() -> Rc<RefCell<dyn Market>>
     where
