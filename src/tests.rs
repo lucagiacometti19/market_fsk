@@ -1,12 +1,7 @@
 #[cfg(test)]
 mod test {
-
-    use crate::wait_one_day;
-    use unitn_market_2022::good::good::Good;
-    use unitn_market_2022::good::good_kind::GoodKind;
     //import here the market_test module and the Market trait
     use unitn_market_2022::market::market_test;
-    use unitn_market_2022::market::*;
     //import here your implementation of the market
     use super::super::FskMarket;
     //make an alias to your market
@@ -29,13 +24,13 @@ mod test {
         market_test::test_get_sell_price_success::<MarketType>();
         //test deadlock prevention
         market_test::test_deadlock_prevention::<MarketType>();
-        //sell tests
+        //test sell
         market_test::test_sell_err_expired_token::<MarketType>();
         market_test::test_sell_err_insufficient_good_quantity::<MarketType>();
         market_test::test_sell_err_unrecognized_token::<MarketType>();
         market_test::test_sell_err_wrong_good_kind::<MarketType>();
         market_test::test_sell_success::<MarketType>();
-        //buy tests
+        //test buy
         market_test::test_buy_good_kind_not_default::<MarketType>();
         market_test::test_buy_insufficient_good_quantity::<MarketType>();
         market_test::test_buy_unrecognized_token::<MarketType>();

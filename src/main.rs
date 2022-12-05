@@ -1,11 +1,10 @@
-use chrono::{Local, Utc};
+use chrono::Local;
 use rand::Rng;
 mod tests;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
-use std::io::prelude::*;
 use std::num::ParseFloatError;
 use std::rc::Rc;
 
@@ -22,7 +21,7 @@ use unitn_market_2022::good::consts::{
 use unitn_market_2022::good::good::Good;
 use unitn_market_2022::good::good_kind::GoodKind;
 use unitn_market_2022::market::good_label::GoodLabel;
-use unitn_market_2022::{market::*, wait_one_day};
+use unitn_market_2022::market::*;
 
 const LOCK_INITIAL_TTL: u64 = 9;
 //higher -> greedier
@@ -34,12 +33,12 @@ const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.99;
 
 struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
-    //the key is the token given as ret value of a buy/sell lock fn
     buy_contracts_archive: ContractsArchive,
     sell_contracts_archive: ContractsArchive,
     log_output: RefCell<File>,
     subs: Vec<Box<dyn Notifiable>>,
     time: u64,
+    is_blackfriday_active: bool,
 }
 
 struct ContractsArchive {
@@ -91,18 +90,15 @@ impl ContractsArchive {
             if contract.expiry_time >= timestamp {
                 //...remove it from the contracts vector, as we don't need it anymore.
                 self.contracts_by_timestamp.pop_front();
-
                 //If the contract is still in the hashmap, it means that it has never been claimed, as buy and sell methods only remove claimed contracts from the hashmap.
                 if self.contracts_by_token.remove(&contract.token).is_some() {
                     //If the contract has expired without being claimed, put it in the expired contracts set and return it.
                     self.expired_contracts.insert(contract.token.clone());
                     return Some(contract);
                 }
-
                 //If the contract is not in the hashmap, it means that it had been claimed. Let the 'while' cycle check the next contract in the vector.
             }
         }
-
         //If we reached this statement, it means that all expired contracts have been cleared.
         None
     }
@@ -125,7 +121,6 @@ impl Notifiable for FskMarket {
         // here we apply logic of changing good quantities, as described in https://github.com/orgs/WG-AdvancedProgramming/discussions/38#discussioncomment-4167913
         //every event triggers a new tick
         self.time += 1;
-        //println!("Exchange rate buy EUR: {}\nExchange rate sell EUR: {}",self.goods.get(&GoodKind::EUR).unwrap().exchange_rate_buy, self.goods.get(&GoodKind::EUR).unwrap().exchange_rate_buy);
         match event.kind {
             EventKind::LockedBuy => {}
             EventKind::Bought => {}
@@ -135,35 +130,37 @@ impl Notifiable for FskMarket {
         }
 
         //black_friday_handling
-
-        //black friday begins
-        if self.time % 7 == 4 {
-            for (good_kind, good_label) in &mut self.goods {
-                match *good_kind {
-                    DEFAULT_GOOD_KIND => {}
-                    _ => {
-                        good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
-                        good_label.exchange_rate_sell =
-                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+        //check if black friday is already running
+        if !self.is_blackfriday_active {
+            //black friday begins
+            if self.time % 7 == 4 {
+                for (good_kind, good_label) in &mut self.goods {
+                    match *good_kind {
+                        DEFAULT_GOOD_KIND => {}
+                        _ => {
+                            good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
+                            good_label.exchange_rate_sell =
+                                FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                        }
+                    }
+                }
+            }
+        } else {
+            //black friday ends
+            if self.time % 7 == 5 {
+                for (good_kind, good_label) in &mut self.goods {
+                    match *good_kind {
+                        DEFAULT_GOOD_KIND => {}
+                        _ => {
+                            good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
+                            good_label.exchange_rate_sell =
+                                FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                        }
                     }
                 }
             }
         }
-
-        //black friday ends
-        if self.time % 7 == 5 {
-            for (good_kind, good_label) in &mut self.goods {
-                match *good_kind {
-                    DEFAULT_GOOD_KIND => {}
-                    _ => {
-                        good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
-                        good_label.exchange_rate_sell =
-                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
-                    }
-                }
-            }
-        }
-
+        
         //decrease exchange rate over time
         for (good_kind, good_label) in &mut self.goods {
             match *good_kind {
@@ -206,22 +203,22 @@ impl Market for FskMarket {
 
         let mut temp = rng.gen_range(0..remainder as i32);
 
-        let YEN_QTY = temp as f32 * DEFAULT_EUR_YEN_EXCHANGE_RATE;
+        let yen_qty = temp as f32 * DEFAULT_EUR_YEN_EXCHANGE_RATE;
         remainder -= temp as f32;
 
         temp = rng.gen_range(0..remainder as i32);
 
-        let USD_QTY = temp as f32 * DEFAULT_EUR_USD_EXCHANGE_RATE;
+        let usd_qty = temp as f32 * DEFAULT_EUR_USD_EXCHANGE_RATE;
         remainder -= temp as f32;
 
         temp = rng.gen_range(0..remainder as i32);
 
-        let YUAN_QTY = temp as f32 * DEFAULT_EUR_YUAN_EXCHANGE_RATE;
+        let yuan_qty = temp as f32 * DEFAULT_EUR_YUAN_EXCHANGE_RATE;
         remainder -= temp as f32;
 
-        let EUR_QTY = remainder;
+        let eur_qty = remainder;
 
-        FskMarket::new_with_quantities(EUR_QTY, YEN_QTY, USD_QTY, YUAN_QTY)
+        FskMarket::new_with_quantities(eur_qty, yen_qty, usd_qty, yuan_qty)
     }
 
     // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
@@ -276,6 +273,7 @@ impl Market for FskMarket {
             subs: vec![],
             time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
+            is_blackfriday_active: false,
         }));
 
         new_market.borrow().write_log_market_init();
