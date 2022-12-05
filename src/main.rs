@@ -144,7 +144,7 @@ impl Notifiable for FskMarket {
                     _ => {
                         good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
                         good_label.exchange_rate_sell =
-                            good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
                     }
                 }
             }
@@ -158,7 +158,7 @@ impl Notifiable for FskMarket {
                     _ => {
                         good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
                         good_label.exchange_rate_sell =
-                            good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
                     }
                 }
             }
@@ -171,7 +171,7 @@ impl Notifiable for FskMarket {
                 _ => {
                     good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
                     good_label.exchange_rate_sell =
-                        good_label.exchange_rate_buy * MARKET_GREEDINESS;
+                        FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
                 }
             }
         }
@@ -256,7 +256,7 @@ impl Market for FskMarket {
                 good_kind: GoodKind::USD,
                 quantity: usd,
                 exchange_rate_buy: 1. / DEFAULT_EUR_USD_EXCHANGE_RATE,
-                exchange_rate_sell: 1. / (DEFAULT_EUR_YEN_EXCHANGE_RATE * MARKET_GREEDINESS),
+                exchange_rate_sell: 1. / (DEFAULT_EUR_USD_EXCHANGE_RATE * MARKET_GREEDINESS),
             },
         );
         goods_result.insert(
@@ -265,7 +265,7 @@ impl Market for FskMarket {
                 good_kind: GoodKind::YUAN,
                 quantity: yuan,
                 exchange_rate_buy: 1. / DEFAULT_EUR_YUAN_EXCHANGE_RATE,
-                exchange_rate_sell: 1. / (DEFAULT_EUR_YEN_EXCHANGE_RATE * MARKET_GREEDINESS),
+                exchange_rate_sell: 1. / (DEFAULT_EUR_YUAN_EXCHANGE_RATE * MARKET_GREEDINESS),
             },
         );
 
@@ -535,7 +535,7 @@ impl Market for FskMarket {
         //calculate new exchange_rate_buy given the quantity bought
         let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
             self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
-            self.goods.get(traded_good_kind).unwrap().quantity,
+            self.goods.get(traded_good_kind).unwrap().quantity + contract.good.get_qty(),
             contract.good.get_qty(),
         );
         self.goods
@@ -698,15 +698,14 @@ impl Market for FskMarket {
             good.split(contract.good.get_qty()).unwrap().get_qty();
         //unwrapping should be safe as errors error conditions were alread checked in gate 4
 
-        //update the price of all de goods according to the rules in the Market prices fluctuation section -> MAY CAUSE PROBLEMS!!!!!!!!!
+        //update the price of all de goods according to the rules in the Market prices fluctuation section
         //new exchange rates of the traded good
-        //TODO->match the unwrap
         let traded_good_kind = &contract.good.get_kind();
         //calculate new exchange_rate_buy given the quantity bought
         let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
             self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
             self.goods.get(traded_good_kind).unwrap().quantity,
-            contract.good.get_qty(),
+            -contract.good.get_qty(),
         );
         self.goods
             .get_mut(traded_good_kind)
