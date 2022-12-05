@@ -1,3 +1,0 @@
-EUR=12
-USD=10
-YUAN=13A
