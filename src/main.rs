@@ -591,7 +591,7 @@ impl Market for FskMarket {
             self.write_log_lock_sell_error(trader_name, kind_to_sell, quantity_to_sell, offer);
             return Err(LockSellError::InsufficientDefaultGoodQuantityAvailable {
                 offered_good_kind: kind_to_sell,
-                offered_good_quantity: offer,
+                offered_good_quantity: quantity_to_sell,
                 available_good_quantity: self.get_budget(),
             });
         }

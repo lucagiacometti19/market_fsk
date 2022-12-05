@@ -25,10 +25,10 @@ mod test {
         //test deadlock prevention
         market_test::test_deadlock_prevention::<MarketType>();
         //test sell
-        market_test::test_sell_err_expired_token::<MarketType>();
-        market_test::test_sell_err_insufficient_good_quantity::<MarketType>();
-        market_test::test_sell_err_unrecognized_token::<MarketType>();
-        market_test::test_sell_err_wrong_good_kind::<MarketType>();
+        market_test::test_sell_expired_token::<MarketType>();
+        market_test::test_sell_insufficient_good_quantity::<MarketType>();
+        market_test::test_sell_unrecognized_token::<MarketType>();
+        market_test::test_sell_wrong_good_kind::<MarketType>();
         market_test::test_sell_success::<MarketType>();
         //test buy
         market_test::test_buy_good_kind_not_default::<MarketType>();
@@ -53,7 +53,7 @@ mod test {
         market_test::test_lock_buy_non_positive_bid::<MarketType>();
         market_test::test_lock_buy_non_positive_quantity_to_buy::<MarketType>();
         //test lock sell
-        //market_test::test_lock_sell_insufficientDefaultGoodQuantityAvailable::<MarketType>(); //not working rn
+        market_test::test_lock_sell_insufficientDefaultGoodQuantityAvailable::<MarketType>(); //not working rn
         market_test::test_lock_sell_nonPositiveOffer::<MarketType>();
         market_test::test_lock_sell_offerTooHigh::<MarketType>();
         market_test::test_working_function_lock_sell_token::<MarketType>();
