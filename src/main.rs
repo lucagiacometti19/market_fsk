@@ -129,15 +129,9 @@ impl FskMarket {
     }
 
     fn restore_all_lock_contracts(&mut self) -> HashMap<GoodKind, f32> {
-        //remove sell contracts
+        //remove buy contracts
         let mut old_quantities: HashMap<GoodKind, f32> = HashMap::new();
-        while let Some(buy_contract) = &self
-            .buy_contracts_archive
-            .contracts_by_timestamp
-            .pop_front()
-        {
-            //save token for later
-            let token = buy_contract.token.clone();
+        for (_, buy_contract) in &self.buy_contracts_archive.contracts_by_token {
             let gk = buy_contract.good.get_kind();
             //save old quantity for return value
             let old_qty = self.goods.get(&gk).unwrap().quantity;
@@ -151,19 +145,10 @@ impl FskMarket {
             };
             //add the lock quantity back to the market
             self.goods.insert(buy_contract.good.get_kind(), new_gl);
-            //remove the contract in the hashmap too!
-            self.buy_contracts_archive.contracts_by_token.remove(&token);
         }
-        //remove buy contracts
-        while let Some(sell_contract) = &self
-            .sell_contracts_archive
-            .contracts_by_timestamp
-            .pop_front()
-        {
-            //save token for later
-            let token = sell_contract.token.clone();
+        //remove sell contracts
+        for (_, sell_contract) in &self.sell_contracts_archive.contracts_by_token {
             let gk = sell_contract.good.get_kind();
-            //let old_qty = self.goods.get(&gk).unwrap().quantity;
             //these unwraps shouldn't fail!
             let new_gl = GoodLabel {
                 good_kind: gk,
@@ -173,10 +158,6 @@ impl FskMarket {
             };
             //add the lock quantity back to the market
             self.goods.insert(sell_contract.good.get_kind(), new_gl);
-            //remove the contract in the hashmap too!
-            self.sell_contracts_archive
-                .contracts_by_token
-                .remove(&token);
         }
         old_quantities
     }
