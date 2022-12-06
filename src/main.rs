@@ -5,8 +5,7 @@ mod tests;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{create_dir, create_dir_all, File, OpenOptions};
-use std::num::ParseFloatError;
+use std::fs::{create_dir_all, File, OpenOptions};
 use std::rc::Rc;
 
 use std::io::{Read, Write};
@@ -28,9 +27,9 @@ const LOCK_INITIAL_TTL: u64 = 9;
 //higher -> greedier
 const MARKET_GREEDINESS: f32 = 1.01;
 
-const BLACK_FRIDAY_DISCOUNT: f32 = 0.40; //discount the goods of 40%
+const BLACK_FRIDAY_DISCOUNT: f32 = 0.20; //discount the goods of 20%
 
-const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.99;
+const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.999;
 
 #[derive(Serialize, Deserialize)]
 struct MarketSnapshot {
@@ -84,13 +83,14 @@ impl ContractsArchive {
 
     /// This function returns an expired contract each time it's called.
     /// That contract will be removed from the struct.
+    /// 
     /// It is the caller responsibility to restore resources contained in the returned contract.
+    /// 
     /// After all expired contracts have been popped, None is returned.
     fn pop_expired(&mut self, timestamp: u64) -> Option<Rc<LockContract>> {
         //While there are still contracts...
         while let Some(contract_ref) = self.contracts_by_timestamp.front() {
             let contract = contract_ref.clone();
-
             //...and the first contract has expired...
             if contract.expiry_time <= timestamp {
                 //...remove it from the contracts vector, as we don't need it anymore.
@@ -408,20 +408,21 @@ impl Notifiable for FskMarket {
                 }
 
                 //black_friday_handling
-                //check if black friday is already running
                 //black friday begins
-                //if self.time % 7 == 4 {
-                for (good_kind, good_label) in &mut self.goods {
-                    match *good_kind {
-                        DEFAULT_GOOD_KIND => {}
-                        _ => {
-                            good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
-                            good_label.exchange_rate_sell =
-                                FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                if self.time % 7 == 4 {
+                    for (good_kind, good_label) in &mut self.goods {
+                        match *good_kind {
+                            DEFAULT_GOOD_KIND => {}
+                            _ => {
+                                good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
+                                good_label.exchange_rate_sell =
+                                    FskMarket::get_new_exchange_rate_sell(
+                                        good_label.exchange_rate_buy,
+                                    )
+                            }
                         }
                     }
                 }
-                //}
                 //black friday ends
                 if self.time % 7 == 5 {
                     for (good_kind, good_label) in &mut self.goods {
@@ -440,40 +441,24 @@ impl Notifiable for FskMarket {
             }
         }
 
-        //only a contract can expire at a given time
-        let mut expired_gk;
-        //0 -> nothing expired
-        //1 -> expired sell contract
-        //2 -> expired buy contract
-        let mut contract_expired_type = 0;
-
         //restore locked default currency for expired sell
         while let Some(expired_contract) = self.sell_contracts_archive.pop_expired(self.time) {
-            contract_expired_type = 1;
-            expired_gk = DEFAULT_GOOD_KIND;
+            /* contract_expired_type = 1;
+            expired_gk = DEFAULT_GOOD_KIND; */
             self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += expired_contract.price;
         }
 
         //restore locked good for expired buyout
         while let Some(expired_contract) = self.buy_contracts_archive.pop_expired(self.time) {
-            contract_expired_type = 2;
-            expired_gk = expired_contract.good.get_kind();
+            /* contract_expired_type = 2;
+            expired_gk = expired_contract.good.get_kind(); */
             self.goods
-                .get_mut(&expired_gk)
+                .get_mut(&expired_contract.good.get_kind())
                 .unwrap()
                 .quantity += expired_contract.good.get_qty();
         }
 
-        //update prices after expired lock restore
-        if contract_expired_type == 1 {
-            //self.update_price(gk, qty);
-            //i don't think i should do anything in here
-        } else if contract_expired_type == 2 {
-            todo!()
-            //self.update_price(gk, qty);
-        }
-
-        //take snapshot and save to file
+        //take snapshot and save to file for visualizer
         self.take_snapshot(String::new());
     }
 }
@@ -484,25 +469,22 @@ impl Market for FskMarket {
         Self: Sized,
     {
         let mut rng = rand::thread_rng();
+        //-0.1 to make up for float rounding errors
         let mut remainder = STARTING_CAPITAL - 0.1;
 
         let mut temp = rng.gen_range(0..remainder as i32);
-
         let yen_qty = temp as f32 * DEFAULT_EUR_YEN_EXCHANGE_RATE;
         remainder -= temp as f32;
 
         temp = rng.gen_range(0..remainder as i32);
-
         let usd_qty = temp as f32 * DEFAULT_EUR_USD_EXCHANGE_RATE;
         remainder -= temp as f32;
 
         temp = rng.gen_range(0..remainder as i32);
-
         let yuan_qty = temp as f32 * DEFAULT_EUR_YUAN_EXCHANGE_RATE;
         remainder -= temp as f32;
 
         let eur_qty = remainder;
-
         FskMarket::new_with_quantities(eur_qty, yen_qty, usd_qty, yuan_qty)
     }
 
@@ -511,7 +493,6 @@ impl Market for FskMarket {
         Self: Sized,
     {
         let mut goods_result = HashMap::new();
-
         goods_result.insert(
             GoodKind::EUR,
             GoodLabel {
@@ -573,12 +554,16 @@ impl Market for FskMarket {
         }
 
         let file_open_res = OpenOptions::new().read(true).open(path);
+        //check if file open threw error
         if let Ok(mut file) = file_open_res {
             let mut market_json = String::new();
+            //if not try to read its content
             if let Ok(_) = file.read_to_string(&mut market_json) {
+                //if read is succesfull try to parse the content into a MarketSnapshot
                 let market_parse_res: Result<MarketSnapshot, _> =
                     serde_json::from_str(&market_json[..]);
                 if let Ok(market) = market_parse_res {
+                    //if parse is succesfull create a new FskMarket
                     return Rc::new(RefCell::new(FskMarket {
                         goods: market.goods,
                         buy_contracts_archive: ContractsArchive::new(),
@@ -597,6 +582,7 @@ impl Market for FskMarket {
         } else if let Err(err) = file_open_res {
             println!("Couldn't open snapshot file, check error below:\n{:?}", err);
         }
+        //in case of error just return a random market
         return FskMarket::new_random();
     }
 
@@ -655,6 +641,7 @@ impl Market for FskMarket {
         for (gk, good_label) in &self.goods {
             let mut new_good_label = good_label.clone();
             if *gk != DEFAULT_GOOD_KIND {
+                //price impact calculation
                 new_good_label.exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
                     good_label.exchange_rate_buy,
                     good_label.quantity,
@@ -717,7 +704,6 @@ impl Market for FskMarket {
 
         //this time we need the mutable reference
         let mut good = self.goods.get_mut(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
-                                                                  //Everything is okay
         good.quantity -= quantity_to_buy;
 
         //create the token
@@ -731,8 +717,10 @@ impl Market for FskMarket {
                 price: bid,
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
-
+        //log
         self.write_log_buy_ok(trader_name, kind_to_buy, quantity_to_buy, bid, &token);
+
+        //notify all the markets of the lock buy
         self.notify(Event {
             kind: EventKind::LockedBuy,
             good_kind: kind_to_buy.clone(),
@@ -802,32 +790,15 @@ impl Market for FskMarket {
 
         let good_to_return = Good::new(contract.good.get_kind(), contract.good.get_qty());
 
-        /* //update the price of all de goods according to the rules in the Market prices fluctuation section -> MAY CAUSE PROBLEMS!!!!!!!!!
-        //new exchange rates of the traded good */
+        //update the price of all de goods according to the rules in the Market prices fluctuation section
+        //new exchange rates of the traded good
         let gk = &contract.good.get_kind();
         self.update_price(gk, contract.good.get_qty());
 
-        /*let traded_good_kind = &contract.good.get_kind();
-                //calculate new exchange_rate_buy given the quantity bought
-                let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
-                    self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
-                    self.goods.get(traded_good_kind).unwrap().quantity + contract.good.get_qty(),
-                    contract.good.get_qty(),
-                );
-                self.goods
-                    .get_mut(traded_good_kind)
-                    .unwrap()
-                    .exchange_rate_buy = new_exchange_rate_buy;
-                //calculate new exchange_rate_sell given the new exchange_rate_buy
-                let new_exchange_rate_sell = FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
-                self.goods
-                    .get_mut(traded_good_kind)
-                    .unwrap()
-                    .exchange_rate_sell = new_exchange_rate_sell;
-        */
         //log
         self.write_log_entry(format!("BUY-TOKEN:{}-OK", token));
 
+        //remove the corresponding contract
         self.buy_contracts_archive.consume_contract(&token);
 
         //notify all the markets of the transaction
@@ -838,7 +809,6 @@ impl Market for FskMarket {
             price: contract_price,
         });
 
-        //reset the lock that was in place
         Ok(good_to_return)
     }
 
@@ -892,8 +862,10 @@ impl Market for FskMarket {
         //we chose to decrease the budget when goods are locked, to avoid having to keep track of locked default good. In case the lock expires, default currency will be put back in goods.
         self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity -= offer;
 
+        //create token
         let token = self.sell_contracts_archive.new_token();
 
+        //add the contract
         self.sell_contracts_archive
             .add_contract(&Rc::new(LockContract {
                 token: token.clone(),
@@ -902,8 +874,10 @@ impl Market for FskMarket {
                 expiry_time: self.time + LOCK_INITIAL_TTL,
             }));
 
+        //log
         self.write_log_sell_ok(trader_name, kind_to_sell, quantity_to_sell, offer, &token);
 
+        //notify all the markets of the lock sell
         self.notify(Event {
             kind: EventKind::LockedSell,
             good_kind: kind_to_sell,
@@ -968,11 +942,13 @@ impl Market for FskMarket {
         //everything checks out, the sell can proceed
 
         //this is the default currency that is going to be returned to the seller (the trader)
-        let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell(...)
+        let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell
 
+        //add the good the trader gave us to the supply of the corresponding good in the market
+        //assume goods contains every goodkind: unwrap is safe
         self.goods.get_mut(&good.get_kind()).unwrap().quantity += contract.good.get_qty();
+        //split the good the trader gave to the market - in case he sent more than previously decided by the lock
         good.split(contract.good.get_qty());
-        //unwrapping should be safe as errors error conditions were alread checked in gate 4
 
         //update the price of all de goods according to the rules in the Market prices fluctuation section
         //new exchange rates of the traded good
@@ -981,30 +957,13 @@ impl Market for FskMarket {
             self.update_price(gk, -contract.good.get_qty());
         }
 
-        /* let traded_good_kind = &contract.good.get_kind();
-        if *traded_good_kind != GoodKind::EUR {
-            //calculate new exchange_rate_buy given the quantity bought
-            let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
-                self.goods.get(traded_good_kind).unwrap().exchange_rate_buy,
-                self.goods.get(traded_good_kind).unwrap().quantity,
-                -contract.good.get_qty(),
-            );
-            self.goods
-                .get_mut(traded_good_kind)
-                .unwrap()
-                .exchange_rate_buy = new_exchange_rate_buy;
-            //calculate new exchange_rate_sell given the new exchange_rate_buy
-            let new_exchange_rate_sell =
-                FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
-            self.goods
-                .get_mut(traded_good_kind)
-                .unwrap()
-                .exchange_rate_sell = new_exchange_rate_sell;
-        } */
+        //log
         self.write_log_entry(format!("SELL-TOKEN:{}-OK", token));
 
+        //remove the corresponding contract
         self.sell_contracts_archive.consume_contract(&token);
 
+        //notify all the markets of the transaction
         self.notify(Event {
             kind: EventKind::Sold,
             good_kind: good.get_kind(),
