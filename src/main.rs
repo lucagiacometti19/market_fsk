@@ -83,9 +83,9 @@ impl ContractsArchive {
 
     /// This function returns an expired contract each time it's called.
     /// That contract will be removed from the struct.
-    /// 
+    ///
     /// It is the caller responsibility to restore resources contained in the returned contract.
-    /// 
+    ///
     /// After all expired contracts have been popped, None is returned.
     fn pop_expired(&mut self, timestamp: u64) -> Option<Rc<LockContract>> {
         //While there are still contracts...
@@ -538,8 +538,11 @@ impl Market for FskMarket {
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
             time: 0,
         }));
-
+        //log market init
         new_market.borrow().write_log_market_init();
+        //take the first snapshot
+        new_market.borrow().take_snapshot(String::new());
+        //return it
         new_market
     }
 
@@ -564,7 +567,7 @@ impl Market for FskMarket {
                     serde_json::from_str(&market_json[..]);
                 if let Ok(market) = market_parse_res {
                     //if parse is succesfull create a new FskMarket
-                    return Rc::new(RefCell::new(FskMarket {
+                    let new_market = Rc::new(RefCell::new(FskMarket {
                         goods: market.goods,
                         buy_contracts_archive: ContractsArchive::new(),
                         sell_contracts_archive: ContractsArchive::new(),
@@ -572,6 +575,10 @@ impl Market for FskMarket {
                         log_output: FskMarket::initialize_log_file("FSK".to_string()),
                         time: market.time,
                     }));
+                    //log market init
+                    new_market.borrow().write_log_market_init();
+                    //take the first snapshot
+                    new_market.borrow().take_snapshot(String::new());
                 } else if let Err(err) = market_parse_res {
                     println!(
                         "Couldn't parse the market snapshot, check error below:\n{:?}",
