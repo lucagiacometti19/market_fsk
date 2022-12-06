@@ -12,7 +12,7 @@ mod test {
     //test every aspect of your market using the generic function
     #[test]
     fn tests() {
-        /* let m = MarketType::new_with_quantities(10000., 10000., 10000., 10000.);
+        let m = MarketType::new_with_quantities(10000., 10000., 10000., 10000.);
         let bid = m.borrow().get_buy_price(GoodKind::USD, 10.).unwrap();
         let token = m
             .borrow_mut()
@@ -38,12 +38,12 @@ mod test {
         let gain = m.borrow_mut().sell(token, &mut good_to_sell).unwrap();
         println!(
             "Venduto {} USD per {} EUR e mi è rimasto {} USD",
-            10.,
-            gain,
-            good_to_sell
+            10., gain, good_to_sell
         );
+        drop(m.borrow_mut());
+        /* let m = FskMarket::new_file("snapshots/market_FSK_snapshot.json");
         drop(m.borrow_mut()); */
-        market_test::test_get_name::<MarketType>();
+        /* market_test::test_get_name::<MarketType>();
         //test new_random
         market_test::test_new_random::<MarketType>();
         market_test::new_random_should_not_exceeed_starting_capital::<MarketType>();
@@ -90,6 +90,6 @@ mod test {
         market_test::test_lock_sell_insufficientDefaultGoodQuantityAvailable::<MarketType>(); //not working rn
         market_test::test_lock_sell_nonPositiveOffer::<MarketType>();
         market_test::test_lock_sell_offerTooHigh::<MarketType>();
-        market_test::test_working_function_lock_sell_token::<MarketType>(); 
+        market_test::test_working_function_lock_sell_token::<MarketType>();  */
     }
 }

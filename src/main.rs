@@ -199,7 +199,10 @@ impl FskMarket {
         }
     }
 
-    fn take_snapshot(&self) {
+    fn take_snapshot(&self, mut filename: String) {
+        if filename.is_empty() {
+            filename = format!("snapshots/market_FSK_snapshot_{}.json", self.time)
+        }
         //copy market values to save to market snapshot
         let snapshot = MarketSnapshot {
             goods: self.goods.clone(),
@@ -217,7 +220,8 @@ impl FskMarket {
                 let file_res = OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open("snapshots/market_FSK_snapshot.json");
+                    .truncate(true)
+                    .open(filename);
                 if let Ok(mut file) = file_res {
                     if let Err(err) = file.write(snapshot_json.as_bytes()) {
                         println!(
@@ -359,7 +363,7 @@ impl Drop for FskMarket {
         //update prices accordingly
         self.update_prices(old_quantities);
         //take snapshot
-        self.take_snapshot()
+        self.take_snapshot("snapshots/market_FSK_snapshot_at_drop.json".to_string())
     }
 }
 
@@ -437,6 +441,9 @@ impl Notifiable for FskMarket {
         }
 
         //need to update the prices! @TODO
+
+        //take snapshot and save to file
+        self.take_snapshot(String::new());
     }
 }
 
@@ -531,11 +538,10 @@ impl Market for FskMarket {
     where
         Self: Sized,
     {
-        let res = FskMarket::new_random();
         let file_pat = path;
         let exists = Path::new(file_pat).exists();
         if !exists {
-            return res;
+            return FskMarket::new_random();
         }
 
         let file_open_res = OpenOptions::new().read(true).open(path);
@@ -563,7 +569,7 @@ impl Market for FskMarket {
         } else if let Err(err) = file_open_res {
             println!("Couldn't open snapshot file, check error below:\n{:?}", err);
         }
-        return res;
+        return FskMarket::new_random();
     }
 
     fn get_name(&self) -> &'static str {
