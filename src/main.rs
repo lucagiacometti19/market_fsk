@@ -406,38 +406,6 @@ impl Notifiable for FskMarket {
                         }
                     }
                 }
-
-                //black_friday_handling
-                //black friday begins
-                if self.time % 7 == 4 {
-                    for (good_kind, good_label) in &mut self.goods {
-                        match *good_kind {
-                            DEFAULT_GOOD_KIND => {}
-                            _ => {
-                                good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
-                                good_label.exchange_rate_sell =
-                                    FskMarket::get_new_exchange_rate_sell(
-                                        good_label.exchange_rate_buy,
-                                    )
-                            }
-                        }
-                    }
-                }
-                //black friday ends
-                if self.time % 7 == 5 {
-                    for (good_kind, good_label) in &mut self.goods {
-                        match *good_kind {
-                            DEFAULT_GOOD_KIND => {}
-                            _ => {
-                                good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
-                                good_label.exchange_rate_sell =
-                                    FskMarket::get_new_exchange_rate_sell(
-                                        good_label.exchange_rate_buy,
-                                    )
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -456,6 +424,34 @@ impl Notifiable for FskMarket {
                 .get_mut(&expired_contract.good.get_kind())
                 .unwrap()
                 .quantity += expired_contract.good.get_qty();
+        }
+
+        //black_friday_handling
+        //black friday begins
+        if self.time % 7 == 4 {
+            for (good_kind, good_label) in &mut self.goods {
+                match *good_kind {
+                    DEFAULT_GOOD_KIND => {}
+                    _ => {
+                        good_label.exchange_rate_buy *= 1. - BLACK_FRIDAY_DISCOUNT;
+                        good_label.exchange_rate_sell =
+                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                    }
+                }
+            }
+        }
+        //black friday ends
+        if self.time % 7 == 5 {
+            for (good_kind, good_label) in &mut self.goods {
+                match *good_kind {
+                    DEFAULT_GOOD_KIND => {}
+                    _ => {
+                        good_label.exchange_rate_buy /= 1. - BLACK_FRIDAY_DISCOUNT;
+                        good_label.exchange_rate_sell =
+                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                    }
+                }
+            }
         }
 
         //take snapshot and save to file for visualizer
