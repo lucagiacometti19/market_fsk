@@ -1,10 +1,11 @@
 use chrono::Local;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 mod tests;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{File, OpenOptions};
+use std::fs::{create_dir, create_dir_all, File, OpenOptions};
 use std::num::ParseFloatError;
 use std::rc::Rc;
 
@@ -31,13 +32,18 @@ const BLACK_FRIDAY_DISCOUNT: f32 = 0.40; //discount the goods of 40%
 
 const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.99;
 
-struct FskMarket {
+#[derive(Serialize, Deserialize)]
+struct MarketSnapshot {
     goods: HashMap<GoodKind, GoodLabel>,
-    buy_contracts_archive: ContractsArchive,
-    sell_contracts_archive: ContractsArchive,
-    log_output: RefCell<File>,
-    subs: Vec<Box<dyn Notifiable>>,
     time: u64,
+}
+
+#[derive(Debug)]
+struct LockContract {
+    token: String,
+    good: Good,
+    price: f32,
+    expiry_time: u64,
 }
 
 struct ContractsArchive {
@@ -105,12 +111,256 @@ impl ContractsArchive {
     }
 }
 
-#[derive(Debug)]
-struct LockContract {
-    token: String,
-    good: Good,
-    price: f32,
-    expiry_time: u64,
+struct FskMarket {
+    goods: HashMap<GoodKind, GoodLabel>,
+    buy_contracts_archive: ContractsArchive,
+    sell_contracts_archive: ContractsArchive,
+    subs: Vec<Box<dyn Notifiable>>,
+    log_output: RefCell<File>,
+    time: u64,
+}
+
+impl FskMarket {
+    fn notify(&mut self, event: Event) {
+        self.on_event(event.clone());
+        for sub in &mut self.subs {
+            sub.on_event(event.clone());
+        }
+    }
+
+    fn restore_all_lock_contracts(&mut self) -> HashMap<GoodKind, f32> {
+        //remove sell contracts
+        let mut old_quantities: HashMap<GoodKind, f32> = HashMap::new();
+        while let Some(buy_contract) = &self
+            .buy_contracts_archive
+            .contracts_by_timestamp
+            .pop_front()
+        {
+            //save token for later
+            let token = buy_contract.token.clone();
+            let gk = buy_contract.good.get_kind();
+            //save old quantity for return value
+            let old_qty = self.goods.get(&gk).unwrap().quantity;
+            old_quantities.insert(gk, old_qty);
+            //these unwraps shouldn't fail!
+            let new_gl = GoodLabel {
+                good_kind: gk,
+                quantity: self.goods.get(&gk).unwrap().quantity + buy_contract.good.get_qty(),
+                exchange_rate_buy: self.goods.get(&gk).unwrap().exchange_rate_buy,
+                exchange_rate_sell: self.goods.get(&gk).unwrap().exchange_rate_sell,
+            };
+            //add the lock quantity back to the market
+            self.goods.insert(buy_contract.good.get_kind(), new_gl);
+            //remove the contract in the hashmap too!
+            self.buy_contracts_archive.contracts_by_token.remove(&token);
+        }
+        //remove buy contracts
+        while let Some(sell_contract) = &self
+            .sell_contracts_archive
+            .contracts_by_timestamp
+            .pop_front()
+        {
+            //save token for later
+            let token = sell_contract.token.clone();
+            let gk = sell_contract.good.get_kind();
+            //let old_qty = self.goods.get(&gk).unwrap().quantity;
+            //these unwraps shouldn't fail!
+            let new_gl = GoodLabel {
+                good_kind: gk,
+                quantity: self.goods.get(&gk).unwrap().quantity + sell_contract.good.get_qty(),
+                exchange_rate_buy: self.goods.get(&gk).unwrap().exchange_rate_buy,
+                exchange_rate_sell: self.goods.get(&gk).unwrap().exchange_rate_sell,
+            };
+            //add the lock quantity back to the market
+            self.goods.insert(sell_contract.good.get_kind(), new_gl);
+            //remove the contract in the hashmap too!
+            self.sell_contracts_archive
+                .contracts_by_token
+                .remove(&token);
+        }
+        old_quantities
+    }
+
+    fn update_prices(&mut self, old_quantities: HashMap<GoodKind, f32>) {
+        for (gk, qty) in &old_quantities {
+            if *gk != GoodKind::EUR {
+                //calculate new exchange_rate_buy given the quantity bought
+                let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(
+                    self.goods.get(gk).unwrap().exchange_rate_buy,
+                    self.goods.get(gk).unwrap().quantity,
+                    self.goods.get(gk).unwrap().quantity - qty,
+                );
+                self.goods.get_mut(gk).unwrap().exchange_rate_buy = new_exchange_rate_buy;
+                //calculate new exchange_rate_sell given the new exchange_rate_buy
+                let new_exchange_rate_sell =
+                    FskMarket::get_new_exchange_rate_sell(new_exchange_rate_buy);
+                self.goods.get_mut(gk).unwrap().exchange_rate_sell = new_exchange_rate_sell;
+            }
+        }
+    }
+
+    fn take_snapshot(&self) {
+        //copy market values to save to market snapshot
+        let snapshot = MarketSnapshot {
+            goods: self.goods.clone(),
+            time: self.time,
+        };
+        let json_parser_result = serde_json::to_string(&snapshot);
+        if let Ok(snapshot_json) = json_parser_result {
+            if let Err(err) = create_dir_all("snapshots") {
+                println!(
+                    "Couldn't create snapshot directory, check error below:\n{:?}",
+                    err
+                );
+            } else {
+                //directory created succesfully
+                let file_res = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open("snapshots/market_FSK_snapshot.json");
+                if let Ok(mut file) = file_res {
+                    if let Err(err) = file.write(snapshot_json.as_bytes()) {
+                        println!(
+                            "Couldn't write in snapshot file, check error below:\n{:?}",
+                            err
+                        );
+                    }
+                } else if let Err(err) = file_res {
+                    println!(
+                        "Couldn't create snapshot file, check error below:\n{:?}",
+                        err
+                    );
+                }
+            }
+        } else if let Err(err) = json_parser_result {
+            println!("Serde couldn't parse the market snapshot:\n{:?}", err);
+        }
+    }
+
+    fn initialize_log_file(market_name: String) -> RefCell<File> {
+        let log_file_name = format!("log_{}.txt", market_name);
+        RefCell::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_name)
+                .unwrap(),
+        )
+    }
+
+    fn write_log_entry(&self, entry: String) {
+        if self
+            .log_output
+            .borrow_mut()
+            .write(
+                format!(
+                    "{}|{}|{}\n",
+                    self.get_name(),
+                    Local::now().format("%y:%m:%d:%H:%M:%S:%3f"),
+                    entry
+                )
+                .as_bytes(),
+            )
+            .is_err()
+        {
+            println!("{}: Couldn't write to log file", self.get_name())
+        }
+        //YY:MM:DD:HH:MM:SEC:MSES
+    }
+
+    fn write_log_market_init(&self) {
+        self.write_log_entry(format!("\nMARKET_INITIALIZATION\nEUR: {:+e}\nUSD: {:+e}\nYEN: {:+e}\nYUAN: {:+e}\nEND_MARKET_INITIALIZATION",
+            self.goods.get(&GoodKind::EUR).unwrap().quantity,
+            self.goods.get(&GoodKind::USD).unwrap().quantity,
+            self.goods.get(&GoodKind::YEN).unwrap().quantity,
+            self.goods.get(&GoodKind::YUAN).unwrap().quantity
+        ));
+    }
+
+    fn write_log_buy_ok(
+        &self,
+        trader_name: String,
+        kind_to_buy: GoodKind,
+        quantity_to_buy: f32,
+        bid: f32,
+        token: &String,
+    ) {
+        self.write_log_entry(format!(
+            "LOCK_BUY-{}-KIND_TO_BUY:{}-QUANTITY_TO_BUY:{:+e}-BID:{:+e}-TOKEN:{}",
+            trader_name, kind_to_buy, quantity_to_buy, bid, token
+        ));
+    }
+
+    fn write_log_lock_buy_error(
+        &self,
+        trader_name: String,
+        kind_to_buy: GoodKind,
+        quantity_to_buy: f32,
+        bid: f32,
+    ) {
+        self.write_log_entry(format!(
+            "LOCK_BUY-{}-KIND_TO_BUY:{}-QUANTITY_TO_BUY:{:+e}-BID:{:+e}-ERROR",
+            trader_name, kind_to_buy, quantity_to_buy, bid
+        ));
+    }
+
+    fn write_log_sell_ok(
+        &self,
+        trader_name: String,
+        kind_to_sell: GoodKind,
+        quantity_to_sell: f32,
+        offer: f32,
+        token: &String,
+    ) {
+        self.write_log_entry(format!(
+            "LOCK_SELL-{}-KIND_TO_SELL:{}-QUANTITY_TO_SELL:{:+e}-OFFER:{:+e}-TOKEN:{}",
+            trader_name, kind_to_sell, quantity_to_sell, offer, token
+        ));
+    }
+
+    fn write_log_lock_sell_error(
+        &self,
+        trader_name: String,
+        kind_to_sell: GoodKind,
+        quantity_to_sell: f32,
+        offer: f32,
+    ) {
+        self.write_log_entry(format!(
+            "LOCK_SELL-{}-KIND_TO_SELL:{}-QUANTITY_TO_SELL:{:+e}-OFFER:{:+e}-ERROR",
+            trader_name, kind_to_sell, quantity_to_sell, offer
+        ));
+    }
+
+    fn write_log_sell_error(&self, token: &String) {
+        self.write_log_entry(format!("SELL-TOKEN:{}-ERROR", token));
+    }
+
+    fn write_log_buy_error(&self, token: &String) {
+        self.write_log_entry(format!("BUY-TOKEN:{}-ERROR", token));
+    }
+
+    fn get_new_exchange_rate_sell(exchange_rate_buy: f32) -> f32 {
+        exchange_rate_buy / MARKET_GREEDINESS
+    }
+
+    fn get_new_exchange_rate_buy(
+        current_exchange_rate_buy: f32,
+        current_quantity: f32,
+        quantity_to_buy: f32,
+    ) -> f32 {
+        current_exchange_rate_buy * current_quantity / (current_quantity - quantity_to_buy)
+    }
+}
+
+impl Drop for FskMarket {
+    fn drop(&mut self) {
+        //removes all the locks and restore all good quantities before snapshot
+        let old_quantities = self.restore_all_lock_contracts();
+        //update prices accordingly
+        self.update_prices(old_quantities);
+        //take snapshot
+        self.take_snapshot()
+    }
 }
 
 impl Notifiable for FskMarket {
@@ -185,11 +435,9 @@ impl Notifiable for FskMarket {
                 .unwrap()
                 .quantity += expired_contract.good.get_qty();
         }
-    }
-}
 
-impl Drop for FskMarket {
-    fn drop(&mut self) {}
+        //need to update the prices! @TODO
+    }
 }
 
 impl Market for FskMarket {
@@ -271,12 +519,11 @@ impl Market for FskMarket {
             buy_contracts_archive: ContractsArchive::new(),
             sell_contracts_archive: ContractsArchive::new(),
             subs: vec![],
-            time: 0,
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
+            time: 0,
         }));
 
         new_market.borrow().write_log_market_init();
-
         new_market
     }
 
@@ -284,39 +531,39 @@ impl Market for FskMarket {
     where
         Self: Sized,
     {
+        let res = FskMarket::new_random();
         let file_pat = path;
         let exists = Path::new(file_pat).exists();
         if !exists {
-            println!("file not found");
-            return FskMarket::new_random();
+            return res;
         }
 
-        let mut file = File::open(file_pat).expect("Impossibile leggere il file");
-        let mut content = String::new();
-        file.read_to_string(&mut content).unwrap();
-        println!("{}", content);
-        let mut values = HashMap::new();
-        content.split("\n").for_each(|x| {
-            println!("{:?}", x);
-            let currency = x.split("=").nth(0).unwrap();
-            let value = x.split("=").nth(1).unwrap();
-            values.insert(currency, value);
-        });
-        println!("{:?}", values);
-
-        let try_parse = || -> Result<Rc<RefCell<dyn Market>>, ParseFloatError> {
-            let eur_qty: f32 = values.get(&"EUR").unwrap_or(&"error").parse::<f32>()?;
-            let yen_qty: f32 = values.get(&"YEN").unwrap_or(&"error").parse::<f32>()?;
-            let yuan_qty: f32 = values.get(&"YUAN").unwrap_or(&"error").parse::<f32>()?;
-            let usd_qty: f32 = values.get(&"USD").unwrap_or(&"error").parse::<f32>()?;
-            Ok(FskMarket::new_with_quantities(
-                eur_qty, yen_qty, yuan_qty, usd_qty,
-            ))
-        };
-        try_parse().unwrap_or({
-            println!("erore.");
-            FskMarket::new_random()
-        })
+        let file_open_res = OpenOptions::new().read(true).open(path);
+        if let Ok(mut file) = file_open_res {
+            let mut market_json = String::new();
+            if let Ok(_) = file.read_to_string(&mut market_json) {
+                let market_parse_res: Result<MarketSnapshot, _> =
+                    serde_json::from_str(&market_json[..]);
+                if let Ok(market) = market_parse_res {
+                    return Rc::new(RefCell::new(FskMarket {
+                        goods: market.goods,
+                        buy_contracts_archive: ContractsArchive::new(),
+                        sell_contracts_archive: ContractsArchive::new(),
+                        subs: vec![],
+                        log_output: FskMarket::initialize_log_file("FSK".to_string()),
+                        time: market.time,
+                    }));
+                } else if let Err(err) = market_parse_res {
+                    println!(
+                        "Couldn't parse the market snapshot, check error below:\n{:?}",
+                        err
+                    );
+                }
+            }
+        } else if let Err(err) = file_open_res {
+            println!("Couldn't open snapshot file, check error below:\n{:?}", err);
+        }
+        return res;
     }
 
     fn get_name(&self) -> &'static str {
@@ -691,8 +938,6 @@ impl Market for FskMarket {
         //this is the default currency that is going to be returned to the seller (the trader)
         let good_to_return = Good::new(DEFAULT_GOOD_KIND, contract.price); //don't need to decrease owned good, already did that in lock_sell(...)
 
-        /* self.goods.get_mut(&good.get_kind()).unwrap().quantity +=
-        good.split(contract.good.get_qty()).unwrap().get_qty(); */
         self.goods.get_mut(&good.get_kind()).unwrap().quantity += contract.good.get_qty();
         good.split(contract.good.get_qty());
         //unwrapping should be safe as errors error conditions were alread checked in gate 4
@@ -731,129 +976,6 @@ impl Market for FskMarket {
         });
 
         Ok(good_to_return)
-    }
-}
-
-impl FskMarket {
-    fn notify(&mut self, event: Event) {
-        self.on_event(event.clone());
-        for sub in &mut self.subs {
-            sub.on_event(event.clone());
-        }
-    }
-
-    fn initialize_log_file(market_name: String) -> RefCell<File> {
-        let log_file_name = format!("log_{}.txt", market_name);
-        RefCell::new(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_file_name)
-                .unwrap(),
-        )
-    }
-
-    fn write_log_entry(&self, entry: String) {
-        if self
-            .log_output
-            .borrow_mut()
-            .write(
-                format!(
-                    "{}|{}|{}\n",
-                    self.get_name(),
-                    Local::now().format("%y:%m:%d:%H:%M:%S:%3f"),
-                    entry
-                )
-                .as_bytes(),
-            )
-            .is_err()
-        {
-            println!("{}: Couldn't write to log file", self.get_name())
-        }
-        //YY:MM:DD:HH:MM:SEC:MSES
-    }
-
-    fn write_log_market_init(&self) {
-        self.write_log_entry(format!("\nMARKET_INITIALIZATION\nEUR: {:+e}\nUSD: {:+e}\nYEN: {:+e}\nYUAN: {:+e}\nEND_MARKET_INITIALIZATION",
-            self.goods.get(&GoodKind::EUR).unwrap().quantity,
-            self.goods.get(&GoodKind::USD).unwrap().quantity,
-            self.goods.get(&GoodKind::YEN).unwrap().quantity,
-            self.goods.get(&GoodKind::YUAN).unwrap().quantity
-        ));
-    }
-
-    fn write_log_buy_ok(
-        &self,
-        trader_name: String,
-        kind_to_buy: GoodKind,
-        quantity_to_buy: f32,
-        bid: f32,
-        token: &String,
-    ) {
-        self.write_log_entry(format!(
-            "LOCK_BUY-{}-KIND_TO_BUY:{}-QUANTITY_TO_BUY:{:+e}-BID:{:+e}-TOKEN:{}",
-            trader_name, kind_to_buy, quantity_to_buy, bid, token
-        ));
-    }
-
-    fn write_log_lock_buy_error(
-        &self,
-        trader_name: String,
-        kind_to_buy: GoodKind,
-        quantity_to_buy: f32,
-        bid: f32,
-    ) {
-        self.write_log_entry(format!(
-            "LOCK_BUY-{}-KIND_TO_BUY:{}-QUANTITY_TO_BUY:{:+e}-BID:{:+e}-ERROR",
-            trader_name, kind_to_buy, quantity_to_buy, bid
-        ));
-    }
-
-    fn write_log_sell_ok(
-        &self,
-        trader_name: String,
-        kind_to_sell: GoodKind,
-        quantity_to_sell: f32,
-        offer: f32,
-        token: &String,
-    ) {
-        self.write_log_entry(format!(
-            "LOCK_SELL-{}-KIND_TO_SELL:{}-QUANTITY_TO_SELL:{:+e}-OFFER:{:+e}-TOKEN:{}",
-            trader_name, kind_to_sell, quantity_to_sell, offer, token
-        ));
-    }
-
-    fn write_log_lock_sell_error(
-        &self,
-        trader_name: String,
-        kind_to_sell: GoodKind,
-        quantity_to_sell: f32,
-        offer: f32,
-    ) {
-        self.write_log_entry(format!(
-            "LOCK_SELL-{}-KIND_TO_SELL:{}-QUANTITY_TO_SELL:{:+e}-OFFER:{:+e}-ERROR",
-            trader_name, kind_to_sell, quantity_to_sell, offer
-        ));
-    }
-
-    fn write_log_sell_error(&self, token: &String) {
-        self.write_log_entry(format!("SELL-TOKEN:{}-ERROR", token));
-    }
-
-    fn write_log_buy_error(&self, token: &String) {
-        self.write_log_entry(format!("BUY-TOKEN:{}-ERROR", token));
-    }
-
-    fn get_new_exchange_rate_sell(exchange_rate_buy: f32) -> f32 {
-        exchange_rate_buy / MARKET_GREEDINESS
-    }
-
-    fn get_new_exchange_rate_buy(
-        current_exchange_rate_buy: f32,
-        current_quantity: f32,
-        quantity_to_buy: f32,
-    ) -> f32 {
-        current_exchange_rate_buy * current_quantity / (current_quantity - quantity_to_buy)
     }
 }
 
