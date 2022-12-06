@@ -427,6 +427,12 @@ impl Notifiable for FskMarket {
             }
         }
 
+        //collect good quantities before expired locked goods are restored
+        let mut old_quantities: HashMap<GoodKind, f32> = HashMap::new();
+        for (gk, gl) in &self.goods {
+            old_quantities.insert(*gk, gl.quantity);
+        }
+
         //restore locked default currency for expired sell
         while let Some(expired_contract) = self.sell_contracts_archive.pop_expired(self.time) {
             self.goods.get_mut(&DEFAULT_GOOD_KIND).unwrap().quantity += expired_contract.price;
@@ -440,7 +446,8 @@ impl Notifiable for FskMarket {
                 .quantity += expired_contract.good.get_qty();
         }
 
-        //need to update the prices! @TODO
+        //update prices after expired lock restore
+        self.update_prices(old_quantities);
 
         //take snapshot and save to file
         self.take_snapshot(String::new());
@@ -453,7 +460,6 @@ impl Market for FskMarket {
         Self: Sized,
     {
         let mut rng = rand::thread_rng();
-        //rng.gen_range(0..10))
         let mut remainder = STARTING_CAPITAL - 0.1;
 
         let mut temp = rng.gen_range(0..remainder as i32);
@@ -475,8 +481,6 @@ impl Market for FskMarket {
 
         FskMarket::new_with_quantities(eur_qty, yen_qty, usd_qty, yuan_qty)
     }
-
-    // Divido in goodKing e per ogni versione una quantità. La somma sia = capitale
 
     fn new_with_quantities(eur: f32, yen: f32, usd: f32, yuan: f32) -> Rc<RefCell<dyn Market>>
     where
@@ -576,12 +580,10 @@ impl Market for FskMarket {
         "FSK"
     }
 
-    ///What is this fn needed for? What should it return?
     fn get_budget(&self) -> f32 {
         self.goods.get(&DEFAULT_GOOD_KIND).unwrap().quantity
     }
 
-    //definisce la bid minima accettabile dal mercato
     fn get_buy_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
         let mut good_quantity = 0.;
 
@@ -610,7 +612,6 @@ impl Market for FskMarket {
         })
     }
 
-    //definiamo l'offerta massima che il nostro market è disposto a pagare un bene
     fn get_sell_price(&self, kind: GoodKind, quantity: f32) -> Result<f32, MarketGetterError> {
         //the quantity is not positive
         if quantity <= 0. {
@@ -662,7 +663,7 @@ impl Market for FskMarket {
             return Err(LockBuyError::NonPositiveBid { negative_bid: bid });
         }
         //get immutable reference so there are no borrow errors
-        let mut good = self.goods.get(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
+        let good = self.goods.get(&kind_to_buy).unwrap(); //assume that goods always contains every goodkind
 
         //5
         if good.quantity < quantity_to_buy {
@@ -769,7 +770,6 @@ impl Market for FskMarket {
         }
 
         //everything checks out, the buy can proceed
-
         //removing the pre-agreed quantity from cash
         cash.split(contract_price);
 
@@ -780,7 +780,6 @@ impl Market for FskMarket {
 
         //update the price of all de goods according to the rules in the Market prices fluctuation section -> MAY CAUSE PROBLEMS!!!!!!!!!
         //new exchange rates of the traded good
-        //TODO->match the unwrap
         let traded_good_kind = &contract.good.get_kind();
         //calculate new exchange_rate_buy given the quantity bought
         let new_exchange_rate_buy = FskMarket::get_new_exchange_rate_buy(

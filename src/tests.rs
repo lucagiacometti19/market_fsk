@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod test {
+    use unitn_market_2022::market::market_test;
+
     //import here the market_test module and the Market trait
-    use unitn_market_2022::{
-        good::{good::Good, good_kind::GoodKind},
-        market::{market_test, Market},
-    };
     //import here your implementation of the market
     use super::super::FskMarket;
     //make an alias to your market 37 TEST
@@ -12,7 +10,7 @@ mod test {
     //test every aspect of your market using the generic function
     #[test]
     fn tests() {
-        let m = MarketType::new_with_quantities(10000., 10000., 10000., 10000.);
+        /* let m = MarketType::new_with_quantities(10000., 10000., 10000., 10000.);
         let bid = m.borrow().get_buy_price(GoodKind::USD, 10.).unwrap();
         let token = m
             .borrow_mut()
@@ -40,10 +38,10 @@ mod test {
             "Venduto {} USD per {} EUR e mi è rimasto {} USD",
             10., gain, good_to_sell
         );
-        drop(m.borrow_mut());
+        drop(m.borrow_mut()); */
         /* let m = FskMarket::new_file("snapshots/market_FSK_snapshot.json");
         drop(m.borrow_mut()); */
-        /* market_test::test_get_name::<MarketType>();
+        market_test::test_get_name::<MarketType>();
         //test new_random
         market_test::test_new_random::<MarketType>();
         market_test::new_random_should_not_exceeed_starting_capital::<MarketType>();
@@ -87,9 +85,9 @@ mod test {
         market_test::test_lock_buy_non_positive_bid::<MarketType>();
         market_test::test_lock_buy_non_positive_quantity_to_buy::<MarketType>();
         //test lock sell
-        market_test::test_lock_sell_insufficientDefaultGoodQuantityAvailable::<MarketType>(); //not working rn
+        market_test::test_lock_sell_insufficientDefaultGoodQuantityAvailable::<MarketType>();
         market_test::test_lock_sell_nonPositiveOffer::<MarketType>();
         market_test::test_lock_sell_offerTooHigh::<MarketType>();
-        market_test::test_working_function_lock_sell_token::<MarketType>();  */
+        market_test::test_working_function_lock_sell_token::<MarketType>();
     }
 }
