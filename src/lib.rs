@@ -111,7 +111,7 @@ impl ContractsArchive {
     }
 }
 
-struct FskMarket {
+pub struct FskMarket {
     goods: HashMap<GoodKind, GoodLabel>,
     buy_contracts_archive: ContractsArchive,
     sell_contracts_archive: ContractsArchive,
@@ -346,7 +346,11 @@ impl FskMarket {
         current_quantity: f32,
         quantity_to_buy: f32,
     ) -> f32 {
-        current_exchange_rate_buy * current_quantity / (current_quantity - quantity_to_buy)
+        let den = current_quantity - quantity_to_buy;
+        if den == 0. {
+            return f32::MAX;
+        }
+        current_exchange_rate_buy * current_quantity / den
     }
 }
 
@@ -375,17 +379,17 @@ impl Notifiable for FskMarket {
             EventKind::Bought => {}
             EventKind::LockedSell => {}
             EventKind::Sold => {}
-            EventKind::Wait => {
-                //decrease exchange rate over time
-                for (good_kind, good_label) in &mut self.goods {
-                    match *good_kind {
-                        DEFAULT_GOOD_KIND => {}
-                        _ => {
-                            good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
-                            good_label.exchange_rate_sell =
-                                FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
-                        }
-                    }
+            EventKind::Wait => {}
+        }
+
+        //decrease exchange rate over time
+        for (good_kind, good_label) in &mut self.goods {
+            match *good_kind {
+                DEFAULT_GOOD_KIND => {}
+                _ => {
+                    good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
+                    good_label.exchange_rate_sell =
+                        FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
                 }
             }
         }
@@ -436,10 +440,11 @@ impl Notifiable for FskMarket {
         }
 
         //take snapshot and save to file for visualizer
-        self.take_snapshot(String::new());
+        //self.take_snapshot(String::new());
     }
 }
 
+#[allow(unused_must_use)]
 impl Market for FskMarket {
     fn new_random() -> Rc<RefCell<dyn Market>>
     where
@@ -518,7 +523,7 @@ impl Market for FskMarket {
         //log market init
         new_market.borrow().write_log_market_init();
         //take the first snapshot
-        new_market.borrow().take_snapshot(String::new());
+        //new_market.borrow().take_snapshot(String::new());
         //return it
         new_market
     }
@@ -715,6 +720,7 @@ impl Market for FskMarket {
         return Ok(token.to_string());
     }
 
+    
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
         //check if the token is valid or expired or unrecognized
         let op_contract = self.buy_contracts_archive.contracts_by_token.get(&token);
@@ -957,8 +963,4 @@ impl Market for FskMarket {
 
         Ok(good_to_return)
     }
-}
-
-fn main() {
-    FskMarket::new_file("data.txt");
 }
