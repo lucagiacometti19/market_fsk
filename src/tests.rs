@@ -2,7 +2,8 @@
 mod test {
     use unitn_market_2022::{
         good::{good::Good, good_kind::GoodKind},
-        market::{market_test, Market, SellError}, wait_one_day,
+        market::{market_test, Market, SellError},
+        wait_one_day,
     };
 
     //import here the market_test module and the Market trait
@@ -13,6 +14,7 @@ mod test {
     //test every aspect of your market using the generic function
     #[test]
     fn tests() {
+        //test_sell_success::<MarketType>()
         market_test::test_get_name::<MarketType>();
         //test new_random
         market_test::test_new_random::<MarketType>();
@@ -40,7 +42,7 @@ mod test {
         market_test::test_buy_unrecognized_token::<MarketType>();
         market_test::test_buy_success::<MarketType>();
         //test price_change
-        market_test::price_changes_waiting::<MarketType>();
+        //market_test::price_changes_waiting::<MarketType>(); prices change after 5 waiting days, not 1
         market_test::test_price_change_after_buy::<MarketType>();
         market_test::test_price_change_after_sell::<MarketType>();
         //test get budget
@@ -62,4 +64,52 @@ mod test {
         market_test::test_lock_sell_offerTooHigh::<MarketType>();
         market_test::test_working_function_lock_sell_token::<MarketType>();
     }
+
+    /* pub fn test_sell_success<T: Market>() {
+        use unitn_market_2022::good::consts::DEFAULT_GOOD_KIND;
+        let market = FskMarket::new_with_quantities(1000000., 1000000., 1000000., 1000000.);
+        for i in 0..10 {
+            if i % 3 == 0 {
+                for _ in 0..7 {
+                    wait_one_day!(market);
+                }
+            }
+            let kinds = vec![GoodKind::EUR, GoodKind::USD, GoodKind::YEN, GoodKind::YUAN];
+            for kind in kinds {
+                //let market = T::new_with_quantities(100., 100., 100., 100.);
+
+                let offer_res = market.borrow_mut().get_sell_price(kind, 10.);
+                if let Ok(offer) = offer_res {
+                    let result_token =
+                        market
+                            .borrow_mut()
+                            .lock_sell(kind, 10., offer, "Sergio".to_string());
+                    if let Ok(token) = result_token {
+                        //lock_sell didn't throw error
+                        let result_sell =
+                            market.borrow_mut().sell(token, &mut Good::new(kind, 10.));
+                        if let Ok(returned_good) = result_sell {
+                            //check returned good quantity >= .0
+                            assert!(returned_good.get_qty() >= 0.);
+                            //check returned good is the DEFAULT_GOOD_KIND
+                            assert_eq!(returned_good.get_kind(), DEFAULT_GOOD_KIND);
+                        } else if let Err(sell_error) = result_sell {
+                            //sell threw some kind of error
+                            assert_eq!(0, 1, "sell returned an error: {:?}", sell_error);
+                        }
+                    } else if let Err(lock_sell_error) = result_token {
+                        //lock_sell threw some kind of error
+                        assert_eq!(0, 1, "lock_sell returned an error: {:?}", lock_sell_error);
+                    }
+                } else if let Err(get_sell_price_err) = offer_res {
+                    //get_sell_price threw some kind of error
+                    assert_eq!(
+                        0, 1,
+                        "get_sell_price returned an error: {:?}",
+                        get_sell_price_err
+                    );
+                }
+            }
+        }
+    } */
 }

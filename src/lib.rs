@@ -31,10 +31,13 @@ const BLACK_FRIDAY_DISCOUNT: f32 = 0.20; //discount the goods of 20%
 
 const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.999;
 
+const TRADER_INACTIVITY_TIME: u64 = 5;
+
 #[derive(Serialize, Deserialize)]
 struct MarketSnapshot {
     goods: HashMap<GoodKind, GoodLabel>,
     time: u64,
+    last_trader_interaction: u64,
 }
 
 #[derive(Debug)]
@@ -118,6 +121,7 @@ pub struct FskMarket {
     subs: Vec<Box<dyn Notifiable>>,
     log_output: RefCell<File>,
     time: u64,
+    last_trader_interaction: u64,
 }
 
 impl FskMarket {
@@ -201,6 +205,7 @@ impl FskMarket {
         let snapshot = MarketSnapshot {
             goods: self.goods.clone(),
             time: self.time,
+            last_trader_interaction: self.last_trader_interaction,
         };
         let json_parser_result = serde_json::to_string(&snapshot);
         if let Ok(snapshot_json) = json_parser_result {
@@ -374,22 +379,26 @@ impl Notifiable for FskMarket {
         // here we apply logic of changing good quantities, as described in https://github.com/orgs/WG-AdvancedProgramming/discussions/38#discussioncomment-4167913
         //every event triggers a new tick
         self.time += 1;
-        match event.kind {
+        /*         match event.kind {
             EventKind::LockedBuy => {}
             EventKind::Bought => {}
             EventKind::LockedSell => {}
             EventKind::Sold => {}
             EventKind::Wait => {}
-        }
+        } */
 
-        //decrease exchange rate over time
-        for (good_kind, good_label) in &mut self.goods {
-            match *good_kind {
-                DEFAULT_GOOD_KIND => {}
-                _ => {
-                    good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
-                    good_label.exchange_rate_sell =
-                        FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+        //check when last trader interaction in our market was
+        if self.time - self.last_trader_interaction > TRADER_INACTIVITY_TIME {
+            //if it was too long ago, we decrease exchange rates
+            //decrease exchange rate over time
+            for (good_kind, good_label) in &mut self.goods {
+                match *good_kind {
+                    DEFAULT_GOOD_KIND => {}
+                    _ => {
+                        good_label.exchange_rate_buy *= EXCHANGE_RATE_CHANGE_RATE_OVER_TIME;
+                        good_label.exchange_rate_sell =
+                            FskMarket::get_new_exchange_rate_sell(good_label.exchange_rate_buy)
+                    }
                 }
             }
         }
@@ -519,6 +528,7 @@ impl Market for FskMarket {
             subs: vec![],
             log_output: FskMarket::initialize_log_file("FSK".to_string()),
             time: 0,
+            last_trader_interaction: 0,
         }));
         //log market init
         new_market.borrow().write_log_market_init();
@@ -556,6 +566,7 @@ impl Market for FskMarket {
                         subs: vec![],
                         log_output: FskMarket::initialize_log_file("FSK".to_string()),
                         time: market.time,
+                        last_trader_interaction: market.last_trader_interaction,
                     }));
                     //log market init
                     new_market.borrow().write_log_market_init();
@@ -709,6 +720,9 @@ impl Market for FskMarket {
         //log
         self.write_log_buy_ok(trader_name, kind_to_buy, quantity_to_buy, bid, &token);
 
+        //save this interaction
+        self.last_trader_interaction = self.time;
+
         //notify all the markets of the lock buy
         self.notify(Event {
             kind: EventKind::LockedBuy,
@@ -720,7 +734,6 @@ impl Market for FskMarket {
         return Ok(token.to_string());
     }
 
-    
     fn buy(&mut self, token: String, cash: &mut Good) -> Result<Good, BuyError> {
         //check if the token is valid or expired or unrecognized
         let op_contract = self.buy_contracts_archive.contracts_by_token.get(&token);
@@ -790,6 +803,9 @@ impl Market for FskMarket {
 
         //remove the corresponding contract
         self.buy_contracts_archive.consume_contract(&token);
+
+        //save this interaction
+        self.last_trader_interaction = self.time;
 
         //notify all the markets of the transaction
         self.notify(Event {
@@ -866,6 +882,9 @@ impl Market for FskMarket {
 
         //log
         self.write_log_sell_ok(trader_name, kind_to_sell, quantity_to_sell, offer, &token);
+
+        //save this interaction
+        self.last_trader_interaction = self.time;
 
         //notify all the markets of the lock sell
         self.notify(Event {
@@ -952,6 +971,9 @@ impl Market for FskMarket {
 
         //remove the corresponding contract
         self.sell_contracts_archive.consume_contract(&token);
+
+        //save this interaction
+        self.last_trader_interaction = self.time;
 
         //notify all the markets of the transaction
         self.notify(Event {
