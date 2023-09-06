@@ -33,6 +33,8 @@ const EXCHANGE_RATE_CHANGE_RATE_OVER_TIME: f32 = 0.999;
 
 const TRADER_INACTIVITY_TIME: u64 = 5;
 
+//prova
+
 #[derive(Serialize, Deserialize)]
 struct MarketSnapshot {
     goods: HashMap<GoodKind, GoodLabel>,
